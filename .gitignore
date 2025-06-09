@@ -5,3 +5,4 @@ scrape-pdfs.ipynb
 reqements.txt
 __pycache__
 parliament_faiss_db
+proceedings/*
