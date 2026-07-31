@@ -1,0 +1,10 @@
+line-length = 100
+target-version = "py311"
+
+extend-exclude = [
+    "proceedings",
+    "data",
+]
+
+[lint]
+select = ["E", "F", "I"]

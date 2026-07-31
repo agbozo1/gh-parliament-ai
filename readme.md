@@ -1,124 +1,165 @@
+# 🏛️ Ghana Parliament Hansard RAG
 
-# 🏛️ Ghana Parliamentary Debates QA App
+A production-shaped Retrieval-Augmented Generation system over the Ghana
+Parliament's Hansard (parliamentary debate) records. It scrapes published
+sitting briefs, indexes them into a vector store, and answers natural-language
+questions about parliamentary proceedings through an agentic LangGraph
+pipeline that refuses to answer when it can't ground a response in the
+actual record — built as a portfolio piece for AI/Forward-Deployed
+Engineering work, and equally usable as a real civic-transparency tool.
 
-This Streamlit application provides an end-to-end pipeline for downloading, processing, embedding, and querying parliamentary debate reports from the Parliament of Ghana.
+## Architecture
 
----
+```mermaid
+flowchart LR
+    subgraph Ingestion
+        A[page_scraper.py<br/>discover sitting dates] --> B[pdf_downloader.py<br/>fetch + store PDFs]
+        B --> C[data/raw/*.pdf]
+        C --> D[ingest.py<br/>extract + clean + chunk + embed]
+        D --> E[(ChromaDB<br/>ghana_parliament_hansard)]
+    end
 
-## 📌 Overview
-
-The application enables users to:
-
-1. **Download Parliamentary PDFs** between a range of dates from the official Parliament of Ghana website.
-2. **Extract & preprocess** text data from the PDFs.
-3. **Train a vector database** using sentence embeddings.
-4. **Query** the debate reports in natural language using a Retrieval-Augmented Generation (RAG) approach powered by LangChain and Ollama.
-
----
-
-## 🗂️ Project Structure
-
-```text
-📁 gh_parliament_ai_app/
-├── app.py                   # Main Streamlit app entry
-├── pages/
-│   ├── 1 - Download Briefs.py  # Page to download PDFs
-│   └── 2 - Train Model.py      # Page to extract, split, embed and save vector DB
-    └── 3 - Query Briefs.py     # Page to run queries on the RAG model
-├── proceedings/            # Folder where downloaded PDFs are stored
-├── parliament_faiss_db_allminlm   # Saved FAISS vector databases
+    subgraph Query
+        F[FastAPI /query] --> G[LangGraph agent]
+        G --> H{query_classifier}
+        H -- retrieval needed --> I[retriever]
+        H -- answerable directly --> M[answer_generator]
+        I --> E
+        I --> J[reranker]
+        J --> M
+        M --> K[citation_formatter]
+        K --> F
+    end
 ```
 
----
+## Stack
 
-## ⚙️ Features
+| Layer | Technology |
+|---|---|
+| Language | Python 3.11 |
+| Orchestration | LangChain + LangGraph |
+| Vector store | ChromaDB (embedded, or server via docker-compose) |
+| Embeddings | OpenAI `text-embedding-3-small` or local `sentence-transformers/all-MiniLM-L6-v2` |
+| LLM | OpenAI, Anthropic (Claude), Mistral, or DeepSeek — whichever key is configured |
+| API | FastAPI (async) |
+| Scraping | `requests` (date-predictable URLs) + Selenium (listing-page discovery) |
+| Containerization | Docker / docker-compose |
+| CI | GitHub Actions (lint, test, docker build) |
 
-### 📥 Docs Downloader (Page 1)
+## Quickstart
 
-- Select a **start and end date**.
-- Downloads all available parliamentary brief PDFs between those dates.
-- Files are saved in the `proceedings/` folder.
-- If a file already exists, it will be **overwritten**.
+```bash
+git clone https://github.com/agbozo1/gh-parliament-ai.git
+cd gh-parliament-ai
+cp .env.example .env
+# edit .env: set at least one LLM provider key (OPENAI_API_KEY, ANTHROPIC_API_KEY,
+# MISTRAL_API_KEY, or DEEPSEEK_API_KEY). EMBEDDING_PROVIDER=huggingface needs no key.
 
-### 🧠 Train Model (Page 2)
+docker-compose up --build
+```
 
-- Reads PDFs from the `proceedings/` folder.
-- Extracts and splits the text into manageable chunks.
-- Generates **sentence-level embeddings** using `OllamaEmbeddings` (e.g., MiniLM or LLaMA3).
-- Saves a local **FAISS vector store** for fast retrieval.
+Trigger a scrape + ingest run, then ask a question:
 
-### ❓ Query Debate Reports (Page 3)
+```bash
+curl -X POST http://localhost:8000/ingest -d '{"days_back": 60}' -H 'Content-Type: application/json'
 
-- Loads the trained vector store.
-- Accepts user input in natural language.
-- Retrieves relevant chunks using semantic search.
-- Uses an LLM to answer questions based on retrieved context.
+curl -X POST http://localhost:8000/query \
+  -H 'Content-Type: application/json' \
+  -d '{"question": "What did Parliament discuss about the 2025 budget statement?"}'
+```
 
----
+Example response:
 
-## 🛠️ Tech Stack
+```json
+{
+  "answer": "On 11th February 2025, the Minister of Finance presented the 2025 budget statement to Parliament, covering revenue projections and planned expenditure...",
+  "sources": [
+    {
+      "document": "11th February, 2025.pdf",
+      "date": "2025-02-11",
+      "url": "https://www.parliament.gh/epanel/docs/pb/11th%20February%2C%202025.pdf"
+    }
+  ],
+  "session_id": "b3e1..."
+}
+```
 
-- **Streamlit** – Interactive web app framework.
-- **LangChain** – RAG orchestration, embeddings, and vector store support.
-- **Ollama** – For running LLMs locally like LLaMA3 and MiniLM.
-- **FAISS** – Fast similarity search for embeddings.
-- **pdfplumber** – Text extraction from PDFs.
+If nothing relevant is indexed, the agent replies:
+`"I could not find relevant information in the parliamentary records."`
+instead of guessing.
 
----
+### Local (no Docker)
 
-## 🚀 How to Run
+```bash
+pip install -r requirements.txt
+uvicorn api.main:app --reload
+```
 
-1. Clone the repo:
+Without `CHROMA_HOST` set, ChromaDB runs embedded and persists to `data/chroma/`.
 
-   ```bash
-   git clone https://github.com/agbozo1/gh-parliament-ai.git
-   cd gh-parliament-ai
-   ```
+### Tests
 
-2. Create a virtual environment and install dependencies:
+```bash
+pytest tests/ -v
+```
 
-   ```bash
-   conda create -n streamlit python=3.10
-   conda activate streamlit
-   pip install -r requirements.txt
-   ```
+No API keys are required — the LLM and vector store are mocked/stubbed in tests.
 
-3. Make sure you have [Ollama](https://ollama.com) installed and running a model:
+## Design decisions
 
-   ```bash
-   ollama run llama3
-   ```
-   Also, make sure you have installed the following LLMs within Ollama:
-    - **llama3.1:latest** (current embedding model used for this project)
-    - **all-minilm:latest**
+**Why LangGraph over a single `RetrievalQA` chain.** A plain chain always
+retrieves, always answers, and has no way to refuse. The graph adds a
+routing step (skip retrieval for chit-chat), a reranking step (drop
+low-relevance chunks before they reach the answer prompt), and a hard
+refusal path when nothing relevant survives reranking — the single
+highest-priority requirement for a system answering questions about
+government records, where a confident hallucination is worse than "I
+don't know."
 
-4. Launch the Streamlit app:
+**Why ChromaDB.** Local-first and file-persisted for zero-ops development,
+but the same code talks to a server (`CHROMA_HOST`/`CHROMA_PORT`) for a
+docker-compose or hosted deployment — no code change between environments,
+and native metadata filtering (`date`, `session_id`) supports scoped
+queries without a second index.
 
-   ```bash
-   streamlit run app.py
-   ```
+**Chunking strategy.** `RecursiveCharacterTextSplitter` at
+`chunk_size=800, chunk_overlap=100`. Hansard text is dense, formal prose;
+800 characters keeps a chunk to roughly one exchange or statement without
+fragmenting mid-sentence as often as a smaller size would, and the overlap
+prevents cutting a quoted figure or name across a chunk boundary.
 
----
+**Multi-provider LLM selection.** Rather than hard-coding one vendor, the
+app reads whichever of `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` /
+`MISTRAL_API_KEY` / `DEEPSEEK_API_KEY` is present and builds the matching
+LangChain chat model; with several keys set it picks one at random per
+process (or pin one via `LLM_PROVIDER`). This keeps the app deployable
+wherever a key happens to be available, including free-tier-only
+environments.
 
-## 📚 Example Use Case
+## Known limitations & next steps
 
-> **Query:** "What were the key economic reforms discussed in February 2024?"
+- **Netlify hosting**: Netlify's serverless functions aren't a good fit for
+  a stateful FastAPI app with a persistent vector store and a LangGraph
+  agent loop — Netlify works well for the docs/marketing surface, but the
+  API itself is best run on a container host (Render, Fly.io, Railway, or
+  the included Dockerfile on any VM) with the `chromadb` service pointed at
+  a persistent volume.
+- The scraper's `page_scraper.py` assumes a listing page exists at a
+  predictable path; if the Parliament site's structure changes, the
+  date-based `pdf_downloader` fallback still works for known date ranges.
+- Reranking is LLM-scored rather than a dedicated cross-encoder — cheaper
+  to run, but adds one LLM call per candidate chunk. A local
+  `sentence-transformers` cross-encoder would cut latency and cost at the
+  expense of another model dependency.
+- `/ingest` runs in a background thread with in-memory job tracking; a
+  restart loses in-flight job status. A real deployment would move this to
+  a task queue (Celery/RQ) with persistent job state.
+- No authentication on the API — add it before exposing this beyond local/demo use.
 
-The app will retrieve relevant passages from debate PDFs, and the LLM will generate a summarized answer based on context.
+## Credits
 
----
+Built on publicly available records from the
+[Parliament of Ghana](https://www.parliament.gh) to promote transparency
+and civic engagement.
 
-## 📎 Notes
-
-- The app checks for the existence of files and **overwrites them** if already present.
-- The PDF date format must match the Parliament of Ghana's naming convention (e.g., `1st January, 2024.pdf`).
-- You can switch embedding models by changing the model name in `OllamaEmbeddings`.
-
----
-
-## 🙌 Credits
-
-Built using publicly available resources from the [Parliament of Ghana](https://www.parliament.gh) to promote transparency and civic engagement.
-
----
 by: Ebenezer Agbozo, PhD.
