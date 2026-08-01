@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 PARLIAMENT_BASE_URL = os.environ.get("PARLIAMENT_BASE_URL", "https://www.parliament.gh")
 HANSARD_LISTING_PATH = os.environ.get("HANSARD_LISTING_PATH", "/publications/business-papers")
-SCRAPE_DELAY_SECONDS = float(os.environ.get("SCRAPE_DELAY_SECONDS", "2"))
+SCRAPE_DELAY_SECONDS = float(os.environ.get("SCRAPE_DELAY_SECONDS", "5"))
 
 _PDF_LINK_RE = re.compile(r"/epanel/docs/pb/[^\"']+\.pdf", re.IGNORECASE)
 

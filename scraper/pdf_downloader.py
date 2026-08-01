@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 PARLIAMENT_BASE_URL = os.environ.get("PARLIAMENT_BASE_URL", "https://www.parliament.gh")
 PDF_OUTPUT_DIR = os.environ.get("PDF_OUTPUT_DIR", "data/raw")
-SCRAPE_DELAY_SECONDS = float(os.environ.get("SCRAPE_DELAY_SECONDS", "2"))
+SCRAPE_DELAY_SECONDS = float(os.environ.get("SCRAPE_DELAY_SECONDS", "5"))
 REQUEST_TIMEOUT_SECONDS = float(os.environ.get("REQUEST_TIMEOUT_SECONDS", "30"))
 
 _MONTH_NAMES = (
