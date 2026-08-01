@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -66,6 +67,15 @@ class HealthResponse(BaseModel):
     documents_indexed: int
 
 
+class IngestRequest(BaseModel):
+    # Preferred: an explicit period, ISO format (YYYY-MM-DD). If both are
+    # set, every sitting date in [start_date, end_date] is scraped and
+    # ingested. Falls back to the last `days_back` days when omitted.
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    days_back: int = 30
+
+
 class IngestResponse(BaseModel):
     status: str
     job_id: str
@@ -91,13 +101,42 @@ async def query(request: QueryRequest) -> QueryResponse:
     )
 
 
-def _run_ingest_job(job_id: str, days_back: int) -> None:
+def _parse_ingest_date(value: str, field_name: str) -> datetime:
+    try:
+        return datetime.combine(date.fromisoformat(value), datetime.min.time())
+    except ValueError:
+        raise HTTPException(
+            status_code=400, detail=f"{field_name} must be an ISO date (YYYY-MM-DD), got {value!r}"
+        ) from None
+
+
+def _resolve_ingest_range(payload: IngestRequest) -> tuple[datetime, datetime]:
+    """Resolve the (start_date, end_date) period to scrape for a request.
+
+    Either both start_date and end_date must be set (an explicit period),
+    or neither (falls back to the last `days_back` days).
+    """
+    if payload.start_date or payload.end_date:
+        if not (payload.start_date and payload.end_date):
+            raise HTTPException(
+                status_code=400, detail="Provide both start_date and end_date, or neither."
+            )
+        start_date = _parse_ingest_date(payload.start_date, "start_date")
+        end_date = _parse_ingest_date(payload.end_date, "end_date")
+        if end_date < start_date:
+            raise HTTPException(status_code=400, detail="end_date must be on or after start_date.")
+        return start_date, end_date
+
+    end_date = datetime.utcnow()
+    start_date = end_date - timedelta(days=payload.days_back)
+    return start_date, end_date
+
+
+def _run_ingest_job(job_id: str, start_date: datetime, end_date: datetime) -> None:
     from pipeline.ingest import run_ingest
 
     _INGEST_JOBS[job_id]["status"] = "running"
     try:
-        end_date = datetime.utcnow()
-        start_date = end_date - timedelta(days=days_back)
         scrape_result = download_range(start_date, end_date)
         chunks_written = run_ingest()
         _INGEST_JOBS[job_id].update(
@@ -111,20 +150,13 @@ def _run_ingest_job(job_id: str, days_back: int) -> None:
 
 
 @app.post("/ingest", response_model=IngestResponse)
-async def ingest(request: Request) -> IngestResponse:
-    body = {}
-    try:
-        body = await request.json()
-    except Exception:
-        pass
-    days_back = int(body.get("days_back", 30)) if isinstance(body, dict) else 30
+async def ingest(payload: IngestRequest) -> IngestResponse:
+    start_date, end_date = _resolve_ingest_range(payload)
 
     job_id = str(uuid.uuid4())
     _INGEST_JOBS[job_id] = {"status": "started"}
 
-    import asyncio
-
-    asyncio.get_event_loop().run_in_executor(None, _run_ingest_job, job_id, days_back)
+    asyncio.get_event_loop().run_in_executor(None, _run_ingest_job, job_id, start_date, end_date)
 
     return IngestResponse(status="started", job_id=job_id)
 

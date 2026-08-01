@@ -16,6 +16,12 @@ const errorEl = document.getElementById("error");
 const resultEl = document.getElementById("result");
 const answerEl = document.getElementById("answer");
 const sourcesEl = document.getElementById("sources");
+const ingestToggle = document.getElementById("ingest-toggle");
+const ingestPanel = document.getElementById("ingest-panel");
+const ingestFrom = document.getElementById("ingest-from");
+const ingestTo = document.getElementById("ingest-to");
+const ingestBtn = document.getElementById("ingest-btn");
+const ingestStatusEl = document.getElementById("ingest-status");
 
 async function checkHealth() {
   try {
@@ -93,6 +99,79 @@ form.addEventListener("submit", async (event) => {
   } finally {
     loadingEl.classList.add("hidden");
     submitBtn.disabled = false;
+  }
+});
+
+ingestToggle.addEventListener("click", () => {
+  const isHidden = ingestPanel.classList.toggle("hidden");
+  ingestToggle.textContent = isHidden ? "+ Ingest new reports" : "− Hide ingest panel";
+});
+
+async function pollIngestJob(jobId) {
+  const maxAttempts = 60; // ~3 minutes at 3s intervals
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+
+    let data;
+    try {
+      const res = await fetch(`${API_BASE}/ingest/${jobId}`);
+      data = await res.json();
+    } catch (err) {
+      ingestStatusEl.textContent = `Lost track of the job: ${err.message}`;
+      return;
+    }
+
+    if (data.status === "completed") {
+      ingestStatusEl.textContent =
+        `Done — ${data.documents_downloaded} PDF(s) downloaded, ` +
+        `${data.chunks_written} chunk(s) indexed.`;
+      checkHealth();
+      return;
+    }
+    if (data.status === "failed") {
+      ingestStatusEl.textContent = `Failed: ${data.error || "unknown error"}`;
+      return;
+    }
+    ingestStatusEl.textContent = `Status: ${data.status}…`;
+  }
+  ingestStatusEl.textContent = "Still running in the background — check back later.";
+}
+
+ingestBtn.addEventListener("click", async () => {
+  const startDate = ingestFrom.value;
+  const endDate = ingestTo.value;
+
+  if (!startDate || !endDate) {
+    ingestStatusEl.textContent = "Pick both a from date and a to date.";
+    return;
+  }
+  if (endDate < startDate) {
+    ingestStatusEl.textContent = "The to date must be on or after the from date.";
+    return;
+  }
+
+  ingestBtn.disabled = true;
+  ingestStatusEl.textContent = "Starting…";
+
+  try {
+    const res = await fetch(`${API_BASE}/ingest`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ start_date: startDate, end_date: endDate }),
+    });
+
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      throw new Error(errBody.detail || `HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+    ingestStatusEl.textContent = "Started — this can take a while depending on the range.";
+    pollIngestJob(data.job_id);
+  } catch (err) {
+    ingestStatusEl.textContent = `Error: ${err.message}`;
+  } finally {
+    ingestBtn.disabled = false;
   }
 });
 
