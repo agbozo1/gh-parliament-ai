@@ -9,7 +9,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -89,7 +89,11 @@ async def health() -> HealthResponse:
 
 @app.post("/query", response_model=QueryResponse)
 async def query(request: QueryRequest) -> QueryResponse:
-    result = run_agent(request.question, date_filter=request.date_filter)
+    try:
+        result = run_agent(request.question, date_filter=request.date_filter)
+    except Exception as exc:
+        logger.exception("Query failed for question=%r", request.question)
+        raise HTTPException(status_code=500, detail=f"Query failed: {exc}") from exc
     return QueryResponse(
         answer=result["answer"],
         sources=result["sources"],

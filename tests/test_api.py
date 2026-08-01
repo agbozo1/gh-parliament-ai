@@ -50,6 +50,22 @@ def test_ingest_status_unknown_job_returns_unknown():
     assert response.json() == {"status": "unknown"}
 
 
+def test_query_returns_500_with_detail_when_agent_raises(mocker):
+    mocker.patch(
+        "api.main.run_agent",
+        side_effect=RuntimeError(
+            "No LLM provider configured. Set one of OPENAI_API_KEY, ANTHROPIC_API_KEY, "
+            "MISTRAL_API_KEY, or DEEPSEEK_API_KEY."
+        ),
+    )
+    client = TestClient(app)
+
+    response = client.post("/query", json={"question": "What did Parliament discuss?"})
+
+    assert response.status_code == 500
+    assert "No LLM provider configured" in response.json()["detail"]
+
+
 def test_health_reports_latest_sitting_date(mocker):
     mocker.patch("api.main.count_documents", return_value=42)
     mocker.patch("api.main.get_latest_ingested_date", return_value="2025-02-11")
