@@ -11,11 +11,7 @@ const submitBtn = document.getElementById("submit-btn");
 const advancedToggle = document.getElementById("advanced-toggle");
 const advancedPanel = document.getElementById("advanced");
 const dateFilterInput = document.getElementById("date-filter");
-const loadingEl = document.getElementById("loading");
-const errorEl = document.getElementById("error");
-const resultEl = document.getElementById("result");
-const answerEl = document.getElementById("answer");
-const sourcesEl = document.getElementById("sources");
+const chatLogEl = document.getElementById("chat-log");
 
 // The index is kept up to date automatically (full backfill once, then a
 // daily check for newly published sittings — see pipeline/sync.py). There's
@@ -42,8 +38,36 @@ advancedToggle.addEventListener("click", () => {
   advancedToggle.textContent = isHidden ? "+ Filter by date" : "− Hide date filter";
 });
 
-function renderSources(sources) {
-  sourcesEl.innerHTML = "";
+function scrollToLatest() {
+  form.scrollIntoView({ behavior: "smooth", block: "end" });
+}
+
+function appendUserTurn(question) {
+  const turn = document.createElement("div");
+  turn.className = "chat-turn chat-turn--user";
+
+  const bubble = document.createElement("div");
+  bubble.className = "chat-bubble chat-bubble--user";
+  bubble.textContent = question;
+
+  turn.appendChild(bubble);
+  chatLogEl.appendChild(turn);
+}
+
+function appendAssistantPendingTurn() {
+  const turn = document.createElement("div");
+  turn.className = "chat-turn chat-turn--assistant";
+
+  const bubble = document.createElement("div");
+  bubble.className = "chat-bubble chat-bubble--assistant chat-bubble--pending";
+  bubble.textContent = "Searching the record…";
+
+  turn.appendChild(bubble);
+  chatLogEl.appendChild(turn);
+  return bubble;
+}
+
+function renderSourcesInto(container, sources) {
   for (const source of sources || []) {
     const row = document.createElement("div");
     row.className = "source";
@@ -61,8 +85,29 @@ function renderSources(sources) {
       row.appendChild(link);
     }
 
-    sourcesEl.appendChild(row);
+    container.appendChild(row);
   }
+}
+
+function resolveAssistantTurn(bubble, { answer, sources }) {
+  bubble.classList.remove("chat-bubble--pending");
+  bubble.textContent = "";
+
+  const answerEl = document.createElement("p");
+  answerEl.className = "answer";
+  answerEl.textContent = answer;
+  bubble.appendChild(answerEl);
+
+  const sourcesEl = document.createElement("div");
+  sourcesEl.className = "sources";
+  renderSourcesInto(sourcesEl, sources);
+  bubble.appendChild(sourcesEl);
+}
+
+function failAssistantTurn(bubble, message) {
+  bubble.classList.remove("chat-bubble--pending");
+  bubble.classList.add("chat-bubble--error");
+  bubble.textContent = message;
 }
 
 form.addEventListener("submit", async (event) => {
@@ -71,9 +116,12 @@ form.addEventListener("submit", async (event) => {
   const question = questionInput.value.trim();
   if (!question) return;
 
-  errorEl.classList.add("hidden");
-  resultEl.classList.add("hidden");
-  loadingEl.classList.remove("hidden");
+  document.body.classList.add("chat-active");
+  appendUserTurn(question);
+  const pendingBubble = appendAssistantPendingTurn();
+  scrollToLatest();
+
+  questionInput.value = "";
   submitBtn.disabled = true;
 
   try {
@@ -86,20 +134,18 @@ form.addEventListener("submit", async (event) => {
       }),
     });
 
+    const data = await res.json().catch(() => ({}));
+
     if (!res.ok) {
-      throw new Error(`Request failed (HTTP ${res.status})`);
+      throw new Error(data.detail || `Request failed (HTTP ${res.status})`);
     }
 
-    const data = await res.json();
-    answerEl.textContent = data.answer;
-    renderSources(data.sources);
-    resultEl.classList.remove("hidden");
+    resolveAssistantTurn(pendingBubble, data);
   } catch (err) {
-    errorEl.textContent = `Something went wrong: ${err.message}`;
-    errorEl.classList.remove("hidden");
+    failAssistantTurn(pendingBubble, `Something went wrong: ${err.message}`);
   } finally {
-    loadingEl.classList.add("hidden");
     submitBtn.disabled = false;
+    scrollToLatest();
   }
 });
 

@@ -17,12 +17,16 @@
     </span>
   </header>
 
-  <main class="hero">
-    <h1>Ask Ghana's <span class="accent">Parliament.</span></h1>
-    <p class="subtitle">
-      Natural-language search over Hansard debate records — grounded
-      answers with citations, or an honest "I don't know."
-    </p>
+  <main id="main" class="hero">
+    <div id="intro" class="intro">
+      <h1>Ask Ghana's <span class="accent">Parliament.</span></h1>
+      <p class="subtitle">
+        Natural-language search over Hansard debate records — grounded
+        answers with citations, or an honest "I don't know."
+      </p>
+    </div>
+
+    <div id="chat-log" class="chat-log"></div>
 
     <form id="query-form" class="query-form">
       <input
@@ -40,14 +44,6 @@
       <label for="date-filter">Sitting date</label>
       <input id="date-filter" type="date" />
     </div>
-
-    <div id="loading" class="loading hidden">Searching the record…</div>
-    <div id="error" class="error hidden"></div>
-
-    <section id="result" class="result hidden">
-      <p id="answer" class="answer"></p>
-      <div id="sources" class="sources"></div>
-    </section>
   </main>
 
   <footer class="footer">
