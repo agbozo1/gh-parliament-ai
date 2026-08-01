@@ -37,6 +37,13 @@ logger = logging.getLogger(__name__)
 # How far back to backfill when the vector store is completely empty.
 ARCHIVE_START_DATE = os.environ.get("HANSARD_ARCHIVE_START_DATE", "2017-01-01")
 
+# discover_hansard_documents() only fetches the listing's first page (see
+# its docstring) -- pagination isn't wired up yet. If the oldest date it
+# found is this many days short of what we asked for, treat the result as
+# incomplete rather than authoritative, so a wide backfill still falls
+# back to date-range probing instead of silently stopping at page one.
+_DISCOVERY_COVERAGE_SLACK_DAYS = 30
+
 
 def resolve_sync_start_date() -> datetime:
     """The first date to (re-)check on this sync run."""
@@ -50,6 +57,8 @@ def _download_via_listing_discovery(
     start_date: datetime, end_date: datetime
 ) -> ScrapeResult | None:
     """Try the listing-page discovery path; return None to signal "fall back"."""
+    from scraper.pdf_downloader import parse_display_name_to_date
+
     try:
         from scraper.page_scraper import discover_hansard_documents, filter_by_date_range
 
@@ -61,6 +70,17 @@ def _download_via_listing_discovery(
         return None
 
     if not documents:
+        return None
+
+    oldest_found = min(parse_display_name_to_date(doc.display_name) for doc in documents)
+    slack = timedelta(days=_DISCOVERY_COVERAGE_SLACK_DAYS)
+    if oldest_found.date() > (start_date + slack).date():
+        logger.warning(
+            "Listing discovery only reached back to %s (requested from %s); "
+            "treating as incomplete and falling back to date-range probing",
+            oldest_found.date(),
+            start_date.date(),
+        )
         return None
 
     result = ScrapeResult(started_at=datetime.utcnow())

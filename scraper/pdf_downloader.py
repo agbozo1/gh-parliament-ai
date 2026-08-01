@@ -38,7 +38,9 @@ _MONTH_NAMES = (
     "January February March April May June July August September October November December"
 ).split()
 _DISPLAY_NAME_RE = re.compile(
-    r"(\d{1,2})(?:st|nd|rd|th)\s+(" + "|".join(_MONTH_NAMES) + r"),\s+(\d{4})"
+    # Comma before the year is optional: the live site's listing omits it
+    # inconsistently (e.g. "29th May 2026" alongside "24th July, 2026").
+    r"(\d{1,2})(?:st|nd|rd|th)\s+(" + "|".join(_MONTH_NAMES) + r"),?\s+(\d{4})"
 )
 
 
