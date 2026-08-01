@@ -16,6 +16,13 @@ worth guessing wrong). This also naturally dedupes the listing's own
 inconsistencies: the same sitting sometimes appears twice under slightly
 different text (missing comma, a "(1)" correction suffix), but always
 collapses to the same canonical date.
+
+The listing is paginated via a ``P=<offset>`` query parameter in steps of
+``PAGE_SIZE`` (e.g. ``?type=HS&P=50`` is page 2). ``discover_hansard_documents``
+walks pages, newest-first, stopping as soon as it's covered back to
+``since`` — so a daily incremental check (``since`` = yesterday) only ever
+reads page 1, while a full historical backfill (``since`` = years ago)
+walks back exactly as many pages as it takes and no further.
 """
 
 from __future__ import annotations
@@ -23,6 +30,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Iterable
@@ -40,6 +48,13 @@ logger = logging.getLogger(__name__)
 PARLIAMENT_BASE_URL = os.environ.get("PARLIAMENT_BASE_URL", "https://www.parliament.gh")
 HANSARD_LISTING_PATH = os.environ.get("HANSARD_LISTING_PATH", "/docs?type=HS")
 SCRAPE_DELAY_SECONDS = float(os.environ.get("SCRAPE_DELAY_SECONDS", "5"))
+
+PAGE_SIZE = 50
+# Safety bound on how many pages to walk back in one call, independent of
+# `since` -- the real archive was ~42 pages (~2,100 docs) when last
+# checked; this leaves generous headroom without risking an unbounded loop
+# if pagination behavior ever changes unexpectedly.
+MAX_PAGES = 80
 
 # Row click handlers look like: showPDF('pb/24th July, 2026.pdf', 'Hansard ...')
 _SHOWPDF_RE = re.compile(r"showPDF\(\s*'([^']+?\.pdf)'", re.IGNORECASE)
@@ -72,31 +87,16 @@ def _load_listing_page(driver: webdriver.Chrome, url: str) -> str:
     return driver.page_source
 
 
-def discover_hansard_documents(
-    base_url: str = PARLIAMENT_BASE_URL,
-    listing_path: str = HANSARD_LISTING_PATH,
-) -> list[DiscoveredDocument]:
-    """Render the Hansard listing page and extract every real sitting date
-    referenced by a showPDF(...) row.
+def _listing_page_url(base_url: str, listing_path: str, offset: int) -> str:
+    if offset <= 0:
+        return base_url.rstrip("/") + listing_path
+    separator = "&" if "?" in listing_path else "?"
+    return f"{base_url.rstrip('/')}{listing_path}{separator}P={offset}"
 
-    Only the first page of results is fetched — the listing is paginated
-    and this doesn't yet drive that pagination (see module docstring).
-    Callers that need the full archive should treat a short/incomplete
-    result as a signal to fall back to date-range probing rather than as
-    "there's nothing more to find."
 
-    Returns an empty list (rather than raising) if the page loads but no
-    matching rows are found, since the listing page's structure is outside
-    our control and may change without notice.
-    """
+def _parse_documents(html: str, base_url: str) -> list[DiscoveredDocument]:
+    """Extract canonical documents from one listing page's HTML."""
     from .pdf_downloader import build_pdf_url, parse_display_name_to_date
-
-    url = base_url.rstrip("/") + listing_path
-    driver = _build_driver()
-    try:
-        html = _load_listing_page(driver, url)
-    finally:
-        driver.quit()
 
     documents: dict[str, DiscoveredDocument] = {}
     for raw_path in _SHOWPDF_RE.findall(html):
@@ -115,9 +115,65 @@ def discover_hansard_documents(
         documents[canonical_name] = DiscoveredDocument(
             url=canonical_url, display_name=canonical_name
         )
+    return sorted(documents.values(), key=lambda doc: doc.display_name)
 
-    result = sorted(documents.values(), key=lambda doc: doc.display_name)
-    logger.info("Discovered %d Hansard document(s) on %s", len(result), url)
+
+def discover_hansard_documents(
+    base_url: str = PARLIAMENT_BASE_URL,
+    listing_path: str = HANSARD_LISTING_PATH,
+    since: datetime | None = None,
+    delay_seconds: float = SCRAPE_DELAY_SECONDS,
+) -> list[DiscoveredDocument]:
+    """Discover real sitting dates from the Hansard listing.
+
+    With `since` omitted, fetches only the first (newest) page. With
+    `since` given, walks back page by page — reusing one browser session —
+    until either a page's oldest date is before `since`, a page turns up
+    no documents at all (end of the real archive), or MAX_PAGES is hit.
+    Listing pages are newest-first, so this naturally stops early for a
+    recent `since` (a daily sync reads page 1 only) and walks further back
+    only when there's actually more history to cover.
+
+    Returns an empty list (rather than raising) if a page loads but no
+    matching rows are found, since the listing page's structure is outside
+    our control and may change without notice.
+    """
+    from .pdf_downloader import parse_display_name_to_date
+
+    driver = _build_driver()
+    all_documents: dict[str, DiscoveredDocument] = {}
+    pages_read = 0
+    try:
+        for page_index in range(MAX_PAGES if since is not None else 1):
+            offset = page_index * PAGE_SIZE
+            url = _listing_page_url(base_url, listing_path, offset)
+            html = _load_listing_page(driver, url)
+            page_documents = _parse_documents(html, base_url)
+            pages_read += 1
+
+            if not page_documents:
+                logger.info("No documents found at %s; stopping pagination", url)
+                break
+
+            for doc in page_documents:
+                all_documents[doc.display_name] = doc
+
+            if since is None:
+                break
+
+            oldest_on_page = min(
+                parse_display_name_to_date(doc.display_name) for doc in page_documents
+            )
+            if oldest_on_page < since:
+                break
+
+            if page_index + 1 < MAX_PAGES and delay_seconds:
+                time.sleep(delay_seconds)
+    finally:
+        driver.quit()
+
+    result = sorted(all_documents.values(), key=lambda doc: doc.display_name)
+    logger.info("Discovered %d Hansard document(s) across %d page(s)", len(result), pages_read)
     return result
 
 

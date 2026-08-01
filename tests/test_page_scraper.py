@@ -89,6 +89,103 @@ def test_discover_returns_empty_list_when_nothing_matches(mocker):
     assert documents == []
 
 
+def test_listing_page_url_builds_offset_query_param():
+    from scraper.page_scraper import _listing_page_url
+
+    assert (
+        _listing_page_url("https://www.parliament.gh", "/docs?type=HS", 0)
+        == "https://www.parliament.gh/docs?type=HS"
+    )
+    assert (
+        _listing_page_url("https://www.parliament.gh", "/docs?type=HS", 50)
+        == "https://www.parliament.gh/docs?type=HS&P=50"
+    )
+    assert (
+        _listing_page_url("https://www.parliament.gh", "/docs?type=HS", 2050)
+        == "https://www.parliament.gh/docs?type=HS&P=2050"
+    )
+
+
+def test_discover_paginates_when_since_given_and_stops_past_the_boundary(mocker):
+    page1 = """
+    <tr onclick="showPDF('pb/24th July, 2026.pdf','x');"></tr>
+    <tr onclick="showPDF('pb/2nd July 2026.pdf','x');"></tr>
+    """
+    page2 = """
+    <tr onclick="showPDF('pb/10th June, 2026.pdf','x');"></tr>
+    <tr onclick="showPDF('pb/1st January, 2026.pdf','x');"></tr>
+    """
+    mocker.patch("scraper.page_scraper._build_driver", return_value=mocker.Mock())
+    urls_seen = []
+
+    def fake_load(driver, url):
+        urls_seen.append(url)
+        return page1 if len(urls_seen) == 1 else page2
+
+    mocker.patch("scraper.page_scraper._load_listing_page", side_effect=fake_load)
+    mocker.patch("scraper.page_scraper.time.sleep")
+
+    documents = discover_hansard_documents(
+        base_url="https://www.parliament.gh", since=datetime(2026, 6, 1)
+    )
+
+    # Page 1's URL has no P= param; page 2 is offset 50. Stops there because
+    # page 2's oldest date (1st January, 2026) is already before `since`.
+    assert urls_seen == [
+        "https://www.parliament.gh/docs?type=HS",
+        "https://www.parliament.gh/docs?type=HS&P=50",
+    ]
+    names = {doc.display_name for doc in documents}
+    assert names == {
+        "24th July, 2026",
+        "2nd July, 2026",
+        "10th June, 2026",
+        "1st January, 2026",
+    }
+
+
+def test_discover_stops_when_a_page_returns_no_documents(mocker):
+    page1 = "<tr onclick=\"showPDF('pb/24th July, 2026.pdf','x');\"></tr>"
+    mocker.patch("scraper.page_scraper._build_driver", return_value=mocker.Mock())
+    urls_seen = []
+
+    def fake_load(driver, url):
+        urls_seen.append(url)
+        return page1 if len(urls_seen) == 1 else "<html>no documents</html>"
+
+    mocker.patch("scraper.page_scraper._load_listing_page", side_effect=fake_load)
+    mocker.patch("scraper.page_scraper.time.sleep")
+
+    documents = discover_hansard_documents(
+        base_url="https://www.parliament.gh", since=datetime(2017, 1, 1)
+    )
+
+    assert len(urls_seen) == 2
+    assert {doc.display_name for doc in documents} == {"24th July, 2026"}
+
+
+def test_discover_respects_max_pages_cap(mocker):
+    mocker.patch("scraper.page_scraper.MAX_PAGES", 3)
+    mocker.patch("scraper.page_scraper._build_driver", return_value=mocker.Mock())
+    page = "<tr onclick=\"showPDF('pb/24th July, 2026.pdf','x');\"></tr>"
+    load_mock = mocker.patch("scraper.page_scraper._load_listing_page", return_value=page)
+    mocker.patch("scraper.page_scraper.time.sleep")
+
+    discover_hansard_documents(base_url="https://www.parliament.gh", since=datetime(2017, 1, 1))
+
+    assert load_mock.call_count == 3
+
+
+def test_discover_without_since_reads_only_the_first_page(mocker):
+    page = "<tr onclick=\"showPDF('pb/24th July, 2026.pdf','x');\"></tr>"
+    mocker.patch("scraper.page_scraper._build_driver", return_value=mocker.Mock())
+    load_mock = mocker.patch("scraper.page_scraper._load_listing_page", return_value=page)
+
+    discover_hansard_documents(base_url="https://www.parliament.gh")
+
+    assert load_mock.call_count == 1
+
+
 def test_filter_by_date_range_keeps_only_dates_inside_the_window():
     from scraper.page_scraper import DiscoveredDocument
 

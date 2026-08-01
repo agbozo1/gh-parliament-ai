@@ -109,12 +109,20 @@ expected to already be populated by the time anyone queries it:
   in the vector store by filename), so this is cheap to run daily.
 - **How dates are found:** `pipeline.sync` first tries
   `scraper.page_scraper`'s listing-page discovery, which only requests URLs
-  for sitting dates that actually have a published brief. If that's
-  unavailable (no Chrome/Selenium locally, listing page unreachable) or
-  finds nothing, it falls back to `pdf_downloader`'s blind day-by-day probe
-  over the range — slower (one request per calendar day, most 404s on an
-  8-year backfill) but always correct, so a broken/changed listing page
-  degrades gracefully instead of silently skipping the backfill.
+  for sitting dates that actually have a published brief. The listing
+  (`https://www.parliament.gh/docs?type=HS`) is paginated via a `P=<offset>`
+  query parameter in steps of 50; discovery walks back page by page —
+  reusing a single browser session — until it's covered back to the sync's
+  start date, a page comes back empty, or a safety cap on page count is hit.
+  Listing pages are newest-first, so a daily incremental sync only ever
+  reads page 1, while the initial full backfill walks back exactly as many
+  pages as the ~2,100-document archive requires and no further. If
+  discovery is unavailable (no Chrome/Selenium locally, listing page
+  unreachable) or doesn't reach far enough back, it falls back to
+  `pdf_downloader`'s blind day-by-day probe over the range — slower (one
+  request per calendar day, most 404s on an 8-year backfill) but always
+  correct, so a broken/changed listing page degrades gracefully instead of
+  silently skipping the backfill.
 
 Both paths are the same function, `pipeline.sync.sync_hansards()`:
 

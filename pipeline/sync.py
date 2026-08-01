@@ -37,11 +37,12 @@ logger = logging.getLogger(__name__)
 # How far back to backfill when the vector store is completely empty.
 ARCHIVE_START_DATE = os.environ.get("HANSARD_ARCHIVE_START_DATE", "2017-01-01")
 
-# discover_hansard_documents() only fetches the listing's first page (see
-# its docstring) -- pagination isn't wired up yet. If the oldest date it
-# found is this many days short of what we asked for, treat the result as
+# discover_hansard_documents(since=...) paginates back until it reaches
+# `start_date`, but stops early if it hits its MAX_PAGES safety cap or a
+# page load fails partway through. If the oldest date it found is still
+# this many days short of what we asked for, treat the result as
 # incomplete rather than authoritative, so a wide backfill still falls
-# back to date-range probing instead of silently stopping at page one.
+# back to date-range probing instead of silently stopping short.
 _DISCOVERY_COVERAGE_SLACK_DAYS = 30
 
 
@@ -62,7 +63,9 @@ def _download_via_listing_discovery(
     try:
         from scraper.page_scraper import discover_hansard_documents, filter_by_date_range
 
-        documents = filter_by_date_range(discover_hansard_documents(), start_date, end_date)
+        documents = filter_by_date_range(
+            discover_hansard_documents(since=start_date), start_date, end_date
+        )
     except Exception:
         logger.warning(
             "Listing-page discovery failed; falling back to date-range probing", exc_info=True
