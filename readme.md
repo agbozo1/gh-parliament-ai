@@ -12,14 +12,16 @@ Engineering work, and equally usable as a real civic-transparency tool.
 
 ```mermaid
 flowchart LR
-    subgraph Ingestion
+    subgraph "Sync (automatic — daily cron, no user involved)"
+        S0["pipeline/sync.py<br/>empty store → full backfill<br/>non-empty → since last indexed date"]
         A[page_scraper.py<br/>discover sitting dates] --> B[pdf_downloader.py<br/>fetch + store PDFs]
+        S0 --> A
         B --> C[data/raw/*.pdf]
-        C --> D[ingest.py<br/>extract + clean + chunk + embed]
+        C --> D[ingest.py<br/>extract + clean + chunk + embed<br/>skips already-indexed PDFs]
         D --> E[(ChromaDB<br/>ghana_parliament_hansard)]
     end
 
-    subgraph Query
+    subgraph "Query (what users actually do)"
         F[FastAPI /query] --> G[LangGraph agent]
         G --> H{query_classifier}
         H -- retrieval needed --> I[retriever]
@@ -31,6 +33,10 @@ flowchart LR
         K --> F
     end
 ```
+
+The store is expected to already be populated by the time anyone queries
+it — users never trigger a scrape themselves. See
+[Keeping the index fresh](#keeping-the-index-fresh) below.
 
 ## Stack
 
@@ -60,12 +66,11 @@ docker-compose up --build
 ```
 
 Open **http://localhost:8000** for the query UI (or **http://localhost:8000/docs** for the raw Swagger API).
-
-Trigger a scrape + ingest run, then ask a question:
+The `sync` service backfills the full Hansard archive on first startup —
+give it a few minutes before querying (watch its logs:
+`docker-compose logs -f sync`). After that, just ask a question:
 
 ```bash
-curl -X POST http://localhost:8000/ingest -d '{"days_back": 60}' -H 'Content-Type: application/json'
-
 curl -X POST http://localhost:8000/query \
   -H 'Content-Type: application/json' \
   -d '{"question": "What did Parliament discuss about the 2025 budget statement?"}'
@@ -91,15 +96,46 @@ If nothing relevant is indexed, the agent replies:
 `"I could not find relevant information in the parliamentary records."`
 instead of guessing.
 
+### Keeping the index fresh
+
+There's no manual "download this range" step for end users — the index is
+expected to already be populated by the time anyone queries it:
+
+- **First run (empty vector store):** a full backfill from
+  `HANSARD_ARCHIVE_START_DATE` (default `2017-01-01`) through today.
+- **Every run after that:** an incremental check — only sitting dates after
+  the most recently indexed one are scraped and ingested. Nothing is
+  re-downloaded or re-embedded (`run_ingest` skips PDFs already represented
+  in the vector store by filename), so this is cheap to run daily.
+
+Both paths are the same function, `pipeline.sync.sync_hansards()`:
+
+- **Docker Compose** runs it automatically via the `sync` service, once at
+  startup and then every 24h (`scripts/sync_hansards.py` in a loop). In
+  production, swap that loop for cron / a systemd timer / a scheduled
+  GitHub Actions workflow hitting `POST /ingest` — the loop just avoids
+  requiring an external scheduler for `docker-compose up` to work.
+- **Manual trigger** (e.g. to seed data immediately instead of waiting for
+  the first daily run): `POST /ingest`, no body needed. Poll
+  `GET /ingest/{job_id}` for status.
+- **Freshness check:** `GET /health` reports `latest_sitting_date` — also
+  shown in the UI's status bar — so you can see at a glance how current the
+  index is without triggering anything.
+
 ### Local (no Docker)
 
 ```bash
 pip install -r requirements.txt
 uvicorn api.main:app --reload
+
+# in a second terminal — do this once to seed data before querying
+python -m scripts.sync_hansards
 ```
 
 Without `CHROMA_HOST` set, ChromaDB runs embedded and persists to `data/chroma/`.
 FastAPI serves the frontend at `/` from the same process — no separate dev server needed.
+For ongoing freshness without Docker's `sync` service, schedule
+`python -m scripts.sync_hansards` via cron (e.g. `0 6 * * *`) or Task Scheduler.
 
 ### Frontend (`web/`)
 
@@ -155,6 +191,16 @@ process (or pin one via `LLM_PROVIDER`). This keeps the app deployable
 wherever a key happens to be available, including free-tier-only
 environments.
 
+**Ingestion is automatic, not a user action.** Earlier iterations exposed a
+manual "pick a date range and download" control to end users. That couples
+query latency to scrape latency (Selenium + PDF parsing + embedding, all in
+the request path) and puts an ops concern in front of people who just want
+to ask a question. Instead, `pipeline.sync.sync_hansards()` keeps the store
+current on its own — full backfill once, incremental catch-up daily — so a
+query only ever has to do retrieval, never a fetch. `POST /ingest` still
+exists for ops (force a sync now instead of waiting for the schedule), but
+it takes no parameters; there's no date range for a user to get wrong.
+
 ## Known limitations & next steps
 
 - **Netlify hosting**: Netlify's serverless functions aren't a good fit for
@@ -170,9 +216,13 @@ environments.
   to run, but adds one LLM call per candidate chunk. A local
   `sentence-transformers` cross-encoder would cut latency and cost at the
   expense of another model dependency.
-- `/ingest` runs in a background thread with in-memory job tracking; a
-  restart loses in-flight job status. A real deployment would move this to
-  a task queue (Celery/RQ) with persistent job state.
+- `/ingest` (and the `sync` service's scheduled runs) execute in a
+  background thread with in-memory job tracking; a restart loses in-flight
+  job status, and the docker-compose `sync` loop is a `sleep 86400` loop,
+  not a real scheduler — fine for one instance, not for multiple replicas.
+  A real deployment would move this to cron/a scheduled GitHub Actions
+  workflow calling `POST /ingest`, or a task queue (Celery/RQ) with
+  persistent job state.
 - No authentication on the API — add it before exposing this beyond local/demo use.
 
 ## Credits

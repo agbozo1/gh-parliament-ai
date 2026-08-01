@@ -6,18 +6,18 @@ import asyncio
 import logging
 import time
 import uuid
-from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from agent.graph import run_agent
+from pipeline.ingest import get_latest_ingested_date
 from pipeline.retriever import count_documents
-from scraper.pdf_downloader import download_range
+from pipeline.sync import sync_hansards
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -65,15 +65,7 @@ class QueryResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     documents_indexed: int
-
-
-class IngestRequest(BaseModel):
-    # Preferred: an explicit period, ISO format (YYYY-MM-DD). If both are
-    # set, every sitting date in [start_date, end_date] is scraped and
-    # ingested. Falls back to the last `days_back` days when omitted.
-    start_date: Optional[str] = None
-    end_date: Optional[str] = None
-    days_back: int = 30
+    latest_sitting_date: Optional[str] = None
 
 
 class IngestResponse(BaseModel):
@@ -85,10 +77,14 @@ class IngestResponse(BaseModel):
 async def health() -> HealthResponse:
     try:
         documents_indexed = count_documents()
+        latest_sitting_date = get_latest_ingested_date()
     except Exception:
-        logger.exception("Failed to count indexed documents")
+        logger.exception("Failed to read index status")
         documents_indexed = 0
-    return HealthResponse(status="ok", documents_indexed=documents_indexed)
+        latest_sitting_date = None
+    return HealthResponse(
+        status="ok", documents_indexed=documents_indexed, latest_sitting_date=latest_sitting_date
+    )
 
 
 @app.post("/query", response_model=QueryResponse)
@@ -101,62 +97,30 @@ async def query(request: QueryRequest) -> QueryResponse:
     )
 
 
-def _parse_ingest_date(value: str, field_name: str) -> datetime:
-    try:
-        return datetime.combine(date.fromisoformat(value), datetime.min.time())
-    except ValueError:
-        raise HTTPException(
-            status_code=400, detail=f"{field_name} must be an ISO date (YYYY-MM-DD), got {value!r}"
-        ) from None
-
-
-def _resolve_ingest_range(payload: IngestRequest) -> tuple[datetime, datetime]:
-    """Resolve the (start_date, end_date) period to scrape for a request.
-
-    Either both start_date and end_date must be set (an explicit period),
-    or neither (falls back to the last `days_back` days).
-    """
-    if payload.start_date or payload.end_date:
-        if not (payload.start_date and payload.end_date):
-            raise HTTPException(
-                status_code=400, detail="Provide both start_date and end_date, or neither."
-            )
-        start_date = _parse_ingest_date(payload.start_date, "start_date")
-        end_date = _parse_ingest_date(payload.end_date, "end_date")
-        if end_date < start_date:
-            raise HTTPException(status_code=400, detail="end_date must be on or after start_date.")
-        return start_date, end_date
-
-    end_date = datetime.utcnow()
-    start_date = end_date - timedelta(days=payload.days_back)
-    return start_date, end_date
-
-
-def _run_ingest_job(job_id: str, start_date: datetime, end_date: datetime) -> None:
-    from pipeline.ingest import run_ingest
-
+def _run_ingest_job(job_id: str) -> None:
     _INGEST_JOBS[job_id]["status"] = "running"
     try:
-        scrape_result = download_range(start_date, end_date)
-        chunks_written = run_ingest()
-        _INGEST_JOBS[job_id].update(
-            status="completed",
-            documents_downloaded=len(scrape_result.documents_downloaded),
-            chunks_written=chunks_written,
-        )
+        result = sync_hansards()
+        _INGEST_JOBS[job_id].update(status="completed", **result)
     except Exception as exc:
         logger.exception("Ingest job %s failed", job_id)
         _INGEST_JOBS[job_id].update(status="failed", error=str(exc))
 
 
 @app.post("/ingest", response_model=IngestResponse)
-async def ingest(payload: IngestRequest) -> IngestResponse:
-    start_date, end_date = _resolve_ingest_range(payload)
+async def ingest() -> IngestResponse:
+    """Manually trigger the same incremental sync the daily job runs.
 
+    No parameters: this always catches the index up to today, from
+    wherever it last left off (or does a full backfill on an empty
+    index). End users querying the app never need to call this — it's
+    for ops/admin use when you don't want to wait for the next scheduled
+    sync (see the `sync` service in docker-compose.yml).
+    """
     job_id = str(uuid.uuid4())
     _INGEST_JOBS[job_id] = {"status": "started"}
 
-    asyncio.get_event_loop().run_in_executor(None, _run_ingest_job, job_id, start_date, end_date)
+    asyncio.get_event_loop().run_in_executor(None, _run_ingest_job, job_id)
 
     return IngestResponse(status="started", job_id=job_id)
 

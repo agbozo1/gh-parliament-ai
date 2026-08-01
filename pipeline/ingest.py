@@ -70,8 +70,15 @@ def build_metadata(pdf_path: Path, base_url: str | None = None) -> dict:
     return metadata
 
 
-def load_and_chunk_pdfs(input_dir: str = PDF_INPUT_DIR) -> list[Document]:
-    """Extract, clean, and chunk every PDF in a directory into Documents."""
+def load_and_chunk_pdfs(
+    input_dir: str = PDF_INPUT_DIR, skip_filenames: set[str] | None = None
+) -> list[Document]:
+    """Extract, clean, and chunk every PDF in a directory into Documents.
+
+    skip_filenames (matched against the PDF's basename) lets callers avoid
+    re-chunking files already indexed — see run_ingest, which uses this to
+    stay idempotent across repeated (e.g. daily) runs.
+    """
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP
     )
@@ -80,8 +87,13 @@ def load_and_chunk_pdfs(input_dir: str = PDF_INPUT_DIR) -> list[Document]:
         logger.warning("PDF input directory %s does not exist", pdf_dir)
         return []
 
+    skip_filenames = skip_filenames or set()
     documents: list[Document] = []
-    pdf_paths = sorted(pdf_dir.glob("*.pdf"))
+    pdf_paths = [p for p in sorted(pdf_dir.glob("*.pdf")) if p.name not in skip_filenames]
+    skipped = len(list(pdf_dir.glob("*.pdf"))) - len(pdf_paths)
+    if skipped:
+        logger.info("Skipping %d already-indexed PDF(s)", skipped)
+
     for pdf_path in pdf_paths:
         raw_text = extract_text(pdf_path)
         if not raw_text.strip():
@@ -128,21 +140,50 @@ def get_vector_store(
     )
 
 
+def _existing_metadatas(vector_store: Chroma) -> list[dict]:
+    return [m for m in vector_store.get(include=["metadatas"]).get("metadatas", []) if m]
+
+
+def get_ingested_filenames(
+    persist_dir: str = CHROMA_PERSIST_DIR, collection_name: str = CHROMA_COLLECTION
+) -> set[str]:
+    """PDF filenames already represented by at least one chunk in the store."""
+    vector_store = get_vector_store(persist_dir=persist_dir, collection_name=collection_name)
+    return {m["pdf_filename"] for m in _existing_metadatas(vector_store) if m.get("pdf_filename")}
+
+
+def get_latest_ingested_date(
+    persist_dir: str = CHROMA_PERSIST_DIR, collection_name: str = CHROMA_COLLECTION
+) -> str | None:
+    """Most recent sitting date (ISO string) already indexed, or None if the store is empty."""
+    vector_store = get_vector_store(persist_dir=persist_dir, collection_name=collection_name)
+    dates = [m["date"] for m in _existing_metadatas(vector_store) if m.get("date")]
+    return max(dates) if dates else None
+
+
 def run_ingest(
     input_dir: str = PDF_INPUT_DIR,
     persist_dir: str = CHROMA_PERSIST_DIR,
     collection_name: str = CHROMA_COLLECTION,
 ) -> int:
-    """Chunk every PDF under input_dir and write the chunks to ChromaDB.
+    """Chunk every not-yet-indexed PDF under input_dir and write it to ChromaDB.
+
+    Idempotent: PDFs already represented in the collection (by filename) are
+    skipped, so calling this repeatedly (e.g. from a daily sync job) only
+    ever adds genuinely new documents instead of duplicating chunks.
 
     Returns the number of chunks written.
     """
-    documents = load_and_chunk_pdfs(input_dir)
+    vector_store = get_vector_store(persist_dir=persist_dir, collection_name=collection_name)
+    already_ingested = {
+        m["pdf_filename"] for m in _existing_metadatas(vector_store) if m.get("pdf_filename")
+    }
+
+    documents = load_and_chunk_pdfs(input_dir, skip_filenames=already_ingested)
     if not documents:
-        logger.info("No documents to ingest")
+        logger.info("No new documents to ingest")
         return 0
 
-    vector_store = get_vector_store(persist_dir=persist_dir, collection_name=collection_name)
     vector_store.add_documents(documents)
     logger.info("Ingested %d chunks into collection '%s'", len(documents), collection_name)
     return len(documents)

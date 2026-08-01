@@ -22,5 +22,24 @@ services:
     depends_on:
       - chromadb
 
+  # Backfills the full Hansard archive on first run, then re-checks for
+  # newly published sittings once a day. This is what keeps the index
+  # populated ahead of any user query — see pipeline/sync.py. A real
+  # deployment would swap this loop for cron/systemd timer/a scheduled
+  # GitHub Actions workflow hitting POST /ingest instead; the loop is here
+  # so `docker-compose up` works out of the box with no external scheduler.
+  sync:
+    build: .
+    command: sh -c "while true; do python -m scripts.sync_hansards; sleep 86400; done"
+    env_file:
+      - .env
+    environment:
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+    volumes:
+      - ./data/raw:/app/data/raw
+    depends_on:
+      - chromadb
+
 volumes:
   chroma-data:
