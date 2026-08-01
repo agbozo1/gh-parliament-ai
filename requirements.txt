@@ -23,6 +23,13 @@ pydantic==2.10.6
 # Scraper / ingestion
 requests==2.32.3
 pdfplumber==0.11.4
+# Pinned: pypdfium2 (pdfplumber's PDF engine) stopped shipping broadly
+# compatible wheels after 4.30.0 — newer releases require building from
+# source on some platform/Python combos, which pulls in a GitHub CLI
+# attestation-verification step (needs gh >= 2.47.0). 4.30.0 still ships a
+# prebuilt wheel for macOS 10.13+ (x86_64) and every other common target,
+# so pin it to avoid that build step entirely.
+pypdfium2==4.30.0
 selenium==4.27.1
 tenacity==9.0.0
 
