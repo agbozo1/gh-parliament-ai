@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ghana Parliament Hansard — Ask</title>
+  <meta name="description" content="Natural-language search over Ghana Parliament's Hansard debate records." />
+  <link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&display=swap" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <span class="brand">🏛️ Hansard&nbsp;RAG</span>
+    <span id="status" class="status status--unknown">
+      <span class="status__dot"></span>
+      <span id="status-text">Checking API…</span>
+    </span>
+  </header>
+
+  <main class="hero">
+    <h1>Ask Ghana's <span class="accent">Parliament.</span></h1>
+    <p class="subtitle">
+      Natural-language search over Hansard debate records — grounded
+      answers with citations, or an honest "I don't know."
+    </p>
+
+    <form id="query-form" class="query-form">
+      <input
+        id="question"
+        type="text"
+        placeholder="What did Parliament discuss about the 2025 budget statement?"
+        autocomplete="off"
+        required
+      />
+      <button type="submit" id="submit-btn">Ask</button>
+    </form>
+
+    <button type="button" id="advanced-toggle" class="link-btn">+ Filter by date</button>
+    <div id="advanced" class="advanced hidden">
+      <label for="date-filter">Sitting date</label>
+      <input id="date-filter" type="date" />
+    </div>
+
+    <div id="loading" class="loading hidden">Searching the record…</div>
+    <div id="error" class="error hidden"></div>
+
+    <section id="result" class="result hidden">
+      <p id="answer" class="answer"></p>
+      <div id="sources" class="sources"></div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    Built on public Hansard records from
+    <a href="https://www.parliament.gh" target="_blank" rel="noopener">parliament.gh</a>
+    — by Ebenezer Agbozo, PhD.
+  </footer>
+
+  <script src="app.js" defer></script>
+</body>
+</html>

@@ -42,6 +42,7 @@ flowchart LR
 | Embeddings | OpenAI `text-embedding-3-small` or local `sentence-transformers/all-MiniLM-L6-v2` |
 | LLM | OpenAI, Anthropic (Claude), Mistral, or DeepSeek — whichever key is configured |
 | API | FastAPI (async) |
+| Frontend | Static HTML/CSS/JS (`web/`), served by FastAPI locally or standalone on Netlify |
 | Scraping | `requests` (date-predictable URLs) + Selenium (listing-page discovery) |
 | Containerization | Docker / docker-compose |
 | CI | GitHub Actions (lint, test, docker build) |
@@ -57,6 +58,8 @@ cp .env.example .env
 
 docker-compose up --build
 ```
+
+Open **http://localhost:8000** for the query UI (or **http://localhost:8000/docs** for the raw Swagger API).
 
 Trigger a scrape + ingest run, then ask a question:
 
@@ -96,6 +99,22 @@ uvicorn api.main:app --reload
 ```
 
 Without `CHROMA_HOST` set, ChromaDB runs embedded and persists to `data/chroma/`.
+FastAPI serves the frontend at `/` from the same process — no separate dev server needed.
+
+### Frontend (`web/`)
+
+A minimal, dependency-free HTML/CSS/JS query UI — no build step, no framework.
+FastAPI mounts it at `/` automatically whenever the `web/` directory is present,
+so `uvicorn api.main:app` alone gets you a working UI locally.
+
+To host it separately (e.g. **Netlify**, decoupled from the API — see
+[Known limitations](#known-limitations--next-steps)):
+
+1. Point Netlify at this repo with `netlify.toml` already set to
+   `publish = "web"` — no build command needed.
+2. Deploy the API itself elsewhere (Render/Fly.io/Railway/your own Docker host).
+3. Edit `API_BASE` at the top of `web/app.js` to that API's URL before deploying
+   (it defaults to same-origin, which only works when FastAPI serves both).
 
 ### Tests
 

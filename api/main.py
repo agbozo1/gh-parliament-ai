@@ -6,10 +6,12 @@ import logging
 import time
 import uuid
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from agent.graph import run_agent
@@ -130,3 +132,11 @@ async def ingest(request: Request) -> IngestResponse:
 @app.get("/ingest/{job_id}")
 async def ingest_status(job_id: str) -> dict:
     return _INGEST_JOBS.get(job_id, {"status": "unknown"})
+
+
+# Serves web/ (the static JS frontend) at "/", after every API route above
+# so it never shadows them. Same files can be deployed as-is to Netlify —
+# see web/app.js for the API_BASE setting when hosting it separately.
+_WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+if _WEB_DIR.exists():
+    app.mount("/", StaticFiles(directory=str(_WEB_DIR), html=True), name="web")
