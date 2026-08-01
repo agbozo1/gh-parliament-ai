@@ -17,10 +17,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Iterable
 
+from dotenv import load_dotenv
 from selenium import webdriver
 from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.chrome.options import Options
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+
+load_dotenv()  # must run before the os.environ.get() calls below
 
 logger = logging.getLogger(__name__)
 

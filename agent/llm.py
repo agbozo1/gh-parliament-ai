@@ -15,6 +15,10 @@ import logging
 import os
 import random
 
+from dotenv import load_dotenv
+
+load_dotenv()  # in case this module is used without going through api.main first
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODELS = {

@@ -13,7 +13,11 @@ from __future__ import annotations
 import logging
 import sys
 
-from pipeline.sync import sync_hansards
+from dotenv import load_dotenv
+
+load_dotenv()  # must run before importing project modules that read env vars at import time
+
+from pipeline.sync import sync_hansards  # noqa: E402
 
 
 def main() -> int:

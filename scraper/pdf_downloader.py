@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import requests
+from dotenv import load_dotenv
 from tenacity import (
     before_sleep_log,
     retry,
@@ -23,6 +24,8 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential,
 )
+
+load_dotenv()  # must run before the os.environ.get() calls below
 
 logger = logging.getLogger(__name__)
 

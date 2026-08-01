@@ -18,8 +18,12 @@ import logging
 import os
 from datetime import datetime, timedelta
 
+from dotenv import load_dotenv
+
 from pipeline.ingest import get_latest_ingested_date, run_ingest
 from scraper.pdf_downloader import download_range
+
+load_dotenv()  # must run before the os.environ.get() call below
 
 logger = logging.getLogger(__name__)
 

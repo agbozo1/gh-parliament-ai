@@ -9,15 +9,18 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from agent.graph import run_agent
-from pipeline.ingest import get_latest_ingested_date
-from pipeline.retriever import count_documents
-from pipeline.sync import sync_hansards
+load_dotenv()  # must run before importing project modules that read env vars at import time
+
+from agent.graph import run_agent  # noqa: E402
+from pipeline.ingest import get_latest_ingested_date  # noqa: E402
+from pipeline.retriever import count_documents  # noqa: E402
+from pipeline.sync import sync_hansards  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

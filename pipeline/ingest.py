@@ -13,12 +13,15 @@ import re
 from pathlib import Path
 
 import pdfplumber
+from dotenv import load_dotenv
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 
 from pipeline.embeddings import get_embeddings
 from scraper.pdf_downloader import build_pdf_url, parse_display_name_to_date
+
+load_dotenv()  # must run before the os.environ.get() calls below
 
 logger = logging.getLogger(__name__)
 
