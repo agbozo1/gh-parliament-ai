@@ -64,10 +64,12 @@ GECKODRIVER_PATH = os.environ.get("GECKODRIVER_PATH")
 
 PAGE_SIZE = 50
 # Safety bound on how many pages to walk back in one call, independent of
-# `since` -- the real archive was ~42 pages (~2,100 docs) when last
-# checked; this leaves generous headroom without risking an unbounded loop
-# if pagination behavior ever changes unexpectedly.
-MAX_PAGES = 80
+# `since` -- the real archive was ~42 pages (~2,100 docs) covering roughly
+# 2017-2026 when last checked. HANSARD_ARCHIVE_START_DATE now reaches back
+# to 2005, more than double that span, so this leaves generous headroom
+# without risking an unbounded loop if pagination behavior ever changes
+# unexpectedly.
+MAX_PAGES = 200
 
 # Row click handlers look like: showPDF('pb/24th July, 2026.pdf', 'Hansard ...')
 _SHOWPDF_RE = re.compile(r"showPDF\(\s*'([^']+?\.pdf)'", re.IGNORECASE)

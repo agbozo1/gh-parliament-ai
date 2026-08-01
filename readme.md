@@ -102,7 +102,7 @@ There's no manual "download this range" step for end users — the index is
 expected to already be populated by the time anyone queries it:
 
 - **First run (empty vector store):** a full backfill from
-  `HANSARD_ARCHIVE_START_DATE` (default `2017-01-01`) through today.
+  `HANSARD_ARCHIVE_START_DATE` (default `2005-01-01`) through today.
 - **Every run after that:** an incremental check — only sitting dates after
   the most recently indexed one are scraped and ingested. Nothing is
   re-downloaded or re-embedded (`run_ingest` skips PDFs already represented
@@ -116,13 +116,16 @@ expected to already be populated by the time anyone queries it:
   start date, a page comes back empty, or a safety cap on page count is hit.
   Listing pages are newest-first, so a daily incremental sync only ever
   reads page 1, while the initial full backfill walks back exactly as many
-  pages as the ~2,100-document archive requires and no further. If
+  pages as the full archive (back to 2005) requires and no further. If
   discovery is unavailable (no Firefox/Selenium locally, listing page
   unreachable) or doesn't reach far enough back, it falls back to
   `pdf_downloader`'s blind day-by-day probe over the range — slower (one
-  request per calendar day, most 404s on an 8-year backfill) but always
+  request per calendar day, most 404s over a 20-year backfill) but always
   correct, so a broken/changed listing page degrades gracefully instead of
-  silently skipping the backfill.
+  silently skipping the backfill. Note the blind fallback can only guess
+  URLs in the site's current naming convention, so it will miss older
+  sittings that used a different naming scheme — discovery is what makes
+  those reachable at all.
 
 Both paths are the same function, `pipeline.sync.sync_hansards()`:
 

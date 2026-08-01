@@ -35,7 +35,7 @@ load_dotenv()  # must run before the os.environ.get() call below
 logger = logging.getLogger(__name__)
 
 # How far back to backfill when the vector store is completely empty.
-ARCHIVE_START_DATE = os.environ.get("HANSARD_ARCHIVE_START_DATE", "2017-01-01")
+ARCHIVE_START_DATE = os.environ.get("HANSARD_ARCHIVE_START_DATE", "2005-01-01")
 
 # discover_hansard_documents(since=...) paginates back until it reaches
 # `start_date`, but stops early if it hits its MAX_PAGES safety cap or a
