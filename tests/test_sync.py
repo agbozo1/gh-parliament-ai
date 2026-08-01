@@ -73,7 +73,7 @@ def test_sync_hansards_is_a_noop_when_already_up_to_date(mocker):
 
 def test_listing_discovery_returns_none_when_discovery_raises(mocker):
     mocker.patch(
-        "scraper.page_scraper.discover_hansard_documents", side_effect=RuntimeError("no chrome")
+        "scraper.page_scraper.discover_hansard_documents", side_effect=RuntimeError("no firefox")
     )
 
     result = _download_via_listing_discovery(datetime(2025, 1, 1), datetime(2025, 1, 31))

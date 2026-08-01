@@ -2,14 +2,24 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Selenium needs a Chromium binary + driver for the scraper.
+# Selenium needs a Firefox binary + geckodriver for the scraper. Firefox
+# ESR is used instead of Chrome/chromedriver because it keeps supporting
+# older host OS versions (e.g. macOS Catalina, for local dev outside
+# Docker) for much longer.
+ENV GECKODRIVER_VERSION=0.35.0
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    chromium \
-    chromium-driver \
+    firefox-esr \
+    curl \
+    && curl -sL "https://github.com/mozilla/geckodriver/releases/download/v${GECKODRIVER_VERSION}/geckodriver-v${GECKODRIVER_VERSION}-linux64.tar.gz" \
+    | tar -xz -C /usr/local/bin \
+    && chmod +x /usr/local/bin/geckodriver \
+    && apt-get purge -y curl \
+    && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
-ENV CHROME_BIN=/usr/bin/chromium \
-    CHROMEDRIVER_PATH=/usr/bin/chromedriver \
+ENV FIREFOX_BIN=/usr/bin/firefox-esr \
+    GECKODRIVER_PATH=/usr/local/bin/geckodriver \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 

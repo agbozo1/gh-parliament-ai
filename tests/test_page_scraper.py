@@ -38,6 +38,40 @@ def _mock_driver(mocker, html: str):
     mocker.patch("scraper.page_scraper._load_listing_page", return_value=html)
 
 
+def test_build_driver_uses_docker_provided_firefox_and_driver_paths(mocker):
+    from scraper.page_scraper import _build_driver
+
+    mocker.patch("scraper.page_scraper.FIREFOX_BIN", "/usr/bin/firefox-esr")
+    mocker.patch("scraper.page_scraper.GECKODRIVER_PATH", "/usr/local/bin/geckodriver")
+    firefox_mock = mocker.patch(
+        "scraper.page_scraper.webdriver.Firefox", return_value=mocker.Mock()
+    )
+    service_mock = mocker.patch("scraper.page_scraper.FirefoxService")
+
+    _build_driver()
+
+    service_mock.assert_called_once_with(executable_path="/usr/local/bin/geckodriver")
+    _, kwargs = firefox_mock.call_args
+    assert kwargs["options"].binary_location == "/usr/bin/firefox-esr"
+    assert kwargs["service"] == service_mock.return_value
+
+
+def test_build_driver_falls_back_to_selenium_manager_when_unset(mocker):
+    from scraper.page_scraper import _build_driver
+
+    mocker.patch("scraper.page_scraper.FIREFOX_BIN", None)
+    mocker.patch("scraper.page_scraper.GECKODRIVER_PATH", None)
+    firefox_mock = mocker.patch(
+        "scraper.page_scraper.webdriver.Firefox", return_value=mocker.Mock()
+    )
+
+    _build_driver()
+
+    _, kwargs = firefox_mock.call_args
+    assert "service" not in kwargs
+    assert kwargs["options"].binary_location == ""
+
+
 def test_discover_parses_showpdf_click_handlers_not_href_links(mocker):
     _mock_driver(mocker, SAMPLE_LISTING_HTML)
 

@@ -14,7 +14,7 @@ the time anyone queries it.
 Fetching prefers the listing-page discovery in scraper.page_scraper
 (finds only dates that actually have a published brief) over blindly
 requesting every calendar day in the range — the latter is the fallback,
-used only if discovery is unavailable (e.g. no Chrome/Selenium locally)
+used only if discovery is unavailable (e.g. no Firefox/Selenium locally)
 or turns up nothing, so a wrong/changed listing path degrades to "slower"
 rather than "silently skips the backfill."
 """

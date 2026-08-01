@@ -117,7 +117,7 @@ expected to already be populated by the time anyone queries it:
   Listing pages are newest-first, so a daily incremental sync only ever
   reads page 1, while the initial full backfill walks back exactly as many
   pages as the ~2,100-document archive requires and no further. If
-  discovery is unavailable (no Chrome/Selenium locally, listing page
+  discovery is unavailable (no Firefox/Selenium locally, listing page
   unreachable) or doesn't reach far enough back, it falls back to
   `pdf_downloader`'s blind day-by-day probe over the range — slower (one
   request per calendar day, most 404s on an 8-year backfill) but always

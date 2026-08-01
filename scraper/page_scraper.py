@@ -38,7 +38,8 @@ from typing import Iterable
 from dotenv import load_dotenv
 from selenium import webdriver
 from selenium.common.exceptions import WebDriverException
-from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.firefox.options import Options
+from selenium.webdriver.firefox.service import Service as FirefoxService
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 load_dotenv()  # must run before the os.environ.get() calls below
@@ -48,6 +49,16 @@ logger = logging.getLogger(__name__)
 PARLIAMENT_BASE_URL = os.environ.get("PARLIAMENT_BASE_URL", "https://www.parliament.gh")
 HANSARD_LISTING_PATH = os.environ.get("HANSARD_LISTING_PATH", "/docs?type=HS")
 SCRAPE_DELAY_SECONDS = float(os.environ.get("SCRAPE_DELAY_SECONDS", "5"))
+
+# Set by the Docker image (see Dockerfile), which installs a matched
+# firefox-esr + geckodriver pair instead of relying on Selenium Manager to
+# auto-detect/download one -- keeps the container's browser and driver
+# versions in lockstep regardless of what's on the host. Unset for local
+# dev, where Selenium Manager's auto-detection is fine. We use Firefox
+# rather than Chrome here because Chrome/chromedriver drop support for
+# older OS versions (e.g. macOS Catalina) much sooner than Firefox does.
+FIREFOX_BIN = os.environ.get("FIREFOX_BIN")
+GECKODRIVER_PATH = os.environ.get("GECKODRIVER_PATH")
 
 PAGE_SIZE = 50
 # Safety bound on how many pages to walk back in one call, independent of
@@ -66,13 +77,15 @@ class DiscoveredDocument:
     display_name: str
 
 
-def _build_driver() -> webdriver.Chrome:
+def _build_driver() -> webdriver.Firefox:
     options = Options()
-    options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    return webdriver.Chrome(options=options)
+    options.add_argument("--headless")
+    if FIREFOX_BIN:
+        options.binary_location = FIREFOX_BIN
+    if GECKODRIVER_PATH:
+        service = FirefoxService(executable_path=GECKODRIVER_PATH)
+        return webdriver.Firefox(options=options, service=service)
+    return webdriver.Firefox(options=options)
 
 
 @retry(
@@ -81,7 +94,7 @@ def _build_driver() -> webdriver.Chrome:
     wait=wait_exponential(multiplier=1, min=1, max=30),
     retry=retry_if_exception_type(WebDriverException),
 )
-def _load_listing_page(driver: webdriver.Chrome, url: str) -> str:
+def _load_listing_page(driver: webdriver.Firefox, url: str) -> str:
     logger.info("Loading listing page: %s", url)
     driver.get(url)
     return driver.page_source
