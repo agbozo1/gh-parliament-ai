@@ -1,21 +1,23 @@
 """Dynamic HTML scraping of the Parliament of Ghana Hansard listing pages.
 
-The Hansard PDF URLs follow a predictable, date-based naming convention
-(see ``pdf_downloader.build_pdf_url``), but not every calendar day has a
-sitting. This module drives a headless browser against the Parliament
-website's document listing (https://www.parliament.gh/docs?type=HS) to
-discover which sitting dates actually have a brief published, so the
-downloader doesn't have to blindly request a URL for every day in a range.
+Not every calendar day has a sitting, and the site's PDF-naming convention
+has changed over the years (recent files are named like "24th July,
+2026.pdf"; older ones like "24may2005.pdf", with no ordinal/comma/spaces at
+all) -- so a URL can't be reliably guessed from a date alone across the
+whole archive (see ``pdf_downloader.build_pdf_url``'s docstring). This
+module drives a headless browser against the Parliament website's document
+listing (https://www.parliament.gh/docs?type=HS) to discover the exact,
+real path for each published sitting instead.
 
-Each row's date comes from a ``showPDF('pb/<name>.pdf', '<title>')`` click
-handler rather than a plain link. We only use that to extract a *date* —
-the actual URL we fetch is always re-derived via ``pdf_downloader.
-build_pdf_url``, a pattern already confirmed working, rather than trusting
-how ``showPDF()`` itself resolves the relative path (unknown, and not
-worth guessing wrong). This also naturally dedupes the listing's own
-inconsistencies: the same sitting sometimes appears twice under slightly
-different text (missing comma, a "(1)" correction suffix), but always
-collapses to the same canonical date.
+Each row's real relative path comes from a
+``showPDF('pb/<name>.pdf', '<title>')`` click handler rather than a plain
+link; that path is exactly what gets fetched (confirmed against the site's
+real URLs), so we use it verbatim rather than reconstructing anything. We
+additionally parse a *date* out of it purely for identity/dedup: the same
+sitting sometimes appears twice in the listing under slightly different
+raw text (missing comma, a "(1)" correction suffix), and collapsing by
+date -- rather than by the raw filename -- keeps that from producing
+duplicate entries.
 
 The listing is paginated via a ``P=<offset>`` query parameter in steps of
 ``PAGE_SIZE`` (e.g. ``?type=HS&P=50`` is page 2). ``discover_hansard_documents``
@@ -108,8 +110,10 @@ def _listing_page_url(base_url: str, listing_path: str, offset: int) -> str:
 
 
 def _parse_documents(html: str, base_url: str) -> list[DiscoveredDocument]:
-    """Extract canonical documents from one listing page's HTML."""
-    from .pdf_downloader import build_pdf_url, parse_display_name_to_date
+    """Extract documents from one listing page's HTML."""
+    from urllib.parse import quote
+
+    from .pdf_downloader import format_display_name, parse_display_name_to_date
 
     documents: dict[str, DiscoveredDocument] = {}
     for raw_path in _SHOWPDF_RE.findall(html):
@@ -122,12 +126,12 @@ def _parse_documents(html: str, base_url: str) -> list[DiscoveredDocument]:
             logger.warning("Could not parse a date from listing entry %r; skipping", raw_name)
             continue
 
-        # Re-derive the canonical (url, display_name) instead of trusting
-        # the site's own text — see module docstring.
-        canonical_url, canonical_name = build_pdf_url(parsed_date, base_url=base_url)
-        documents[canonical_name] = DiscoveredDocument(
-            url=canonical_url, display_name=canonical_name
-        )
+        # Fetch the site's own raw path verbatim (it's the real URL -- see
+        # module docstring) but key identity/dedup off the parsed date via
+        # a stable display name, since the raw text isn't consistent.
+        canonical_name = format_display_name(parsed_date)
+        url = f"{base_url.rstrip('/')}/epanel/docs/{quote(raw_path, safe='/')}"
+        documents[canonical_name] = DiscoveredDocument(url=url, display_name=canonical_name)
     return sorted(documents.values(), key=lambda doc: doc.display_name)
 
 

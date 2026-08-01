@@ -36,6 +36,14 @@ def test_parse_display_name_returns_none_for_garbage():
     assert parse_display_name_to_date("not-a-date.pdf") is None
 
 
+def test_parse_display_name_handles_older_unpunctuated_lowercase_form():
+    # The site's PDF naming convention used to be lowercase and fully
+    # unpunctuated (no ordinal suffix, no comma, no spaces) before it
+    # switched to the current "24th July, 2026" style.
+    assert parse_display_name_to_date("24may2005") == datetime(2005, 5, 24)
+    assert parse_display_name_to_date("2june2005") == datetime(2005, 6, 2)
+
+
 class _FakeResponse:
     def __init__(self, content=b"%PDF-1.4 fake", status_code=200):
         self.content = content

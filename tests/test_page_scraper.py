@@ -82,7 +82,7 @@ def test_discover_parses_showpdf_click_handlers_not_href_links(mocker):
     assert "29th May, 2026" in names  # comma-less source text still parses
 
 
-def test_discover_canonicalizes_urls_via_build_pdf_url(mocker):
+def test_discover_uses_the_raw_showpdf_path_as_the_url(mocker):
     _mock_driver(mocker, SAMPLE_LISTING_HTML)
 
     documents = discover_hansard_documents(base_url="https://www.parliament.gh")
@@ -92,6 +92,23 @@ def test_discover_canonicalizes_urls_via_build_pdf_url(mocker):
         by_name["24th July, 2026"].url
         == "https://www.parliament.gh/epanel/docs/pb/24th%20July%2C%202026.pdf"
     )
+
+
+def test_discover_preserves_older_unpunctuated_urls_verbatim(mocker):
+    # Older sittings use a different, unpunctuated naming convention
+    # (e.g. "24may2005.pdf") that can't be reconstructed from the date --
+    # the raw showPDF() path must be used as-is instead.
+    html = """
+    <tr onclick="showPDF('pb/24may2005.pdf','Hansard 24th May, 2005');"></tr>
+    <tr onclick="showPDF('pb/2june2005.pdf','Hansard 2nd June, 2005');"></tr>
+    """
+    _mock_driver(mocker, html)
+
+    documents = discover_hansard_documents(base_url="https://www.parliament.gh")
+
+    by_name = {doc.display_name: doc for doc in documents}
+    assert by_name["24th May, 2005"].url == "https://www.parliament.gh/epanel/docs/pb/24may2005.pdf"
+    assert by_name["2nd June, 2005"].url == "https://www.parliament.gh/epanel/docs/pb/2june2005.pdf"
 
 
 def test_discover_dedupes_inconsistent_raw_formatting_for_the_same_date(mocker):
