@@ -8,9 +8,6 @@ const statusTextEl = document.getElementById("status-text");
 const form = document.getElementById("query-form");
 const questionInput = document.getElementById("question");
 const submitBtn = document.getElementById("submit-btn");
-const advancedToggle = document.getElementById("advanced-toggle");
-const advancedPanel = document.getElementById("advanced");
-const dateFilterInput = document.getElementById("date-filter");
 const chatLogEl = document.getElementById("chat-log");
 
 // The index is kept up to date automatically (full backfill once, then a
@@ -32,11 +29,6 @@ async function checkHealth() {
     statusTextEl.textContent = "API unreachable";
   }
 }
-
-advancedToggle.addEventListener("click", () => {
-  const isHidden = advancedPanel.classList.toggle("hidden");
-  advancedToggle.textContent = isHidden ? "+ Filter by date" : "− Hide date filter";
-});
 
 function scrollToLatest() {
   form.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -128,10 +120,7 @@ form.addEventListener("submit", async (event) => {
     const res = await fetch(`${API_BASE}/query`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        question,
-        date_filter: dateFilterInput.value || null,
-      }),
+      body: JSON.stringify({ question }),
     });
 
     const data = await res.json().catch(() => ({}));

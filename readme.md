@@ -107,6 +107,14 @@ expected to already be populated by the time anyone queries it:
   the most recently indexed one are scraped and ingested. Nothing is
   re-downloaded or re-embedded (`run_ingest` skips PDFs already represented
   in the vector store by filename), so this is cheap to run daily.
+- **How dates are found:** `pipeline.sync` first tries
+  `scraper.page_scraper`'s listing-page discovery, which only requests URLs
+  for sitting dates that actually have a published brief. If that's
+  unavailable (no Chrome/Selenium locally, listing page unreachable) or
+  finds nothing, it falls back to `pdf_downloader`'s blind day-by-day probe
+  over the range — slower (one request per calendar day, most 404s on an
+  8-year backfill) but always correct, so a broken/changed listing page
+  degrades gracefully instead of silently skipping the backfill.
 
 Both paths are the same function, `pipeline.sync.sync_hansards()`:
 
@@ -134,8 +142,29 @@ python -m scripts.sync_hansards
 
 Without `CHROMA_HOST` set, ChromaDB runs embedded and persists to `data/chroma/`.
 FastAPI serves the frontend at `/` from the same process — no separate dev server needed.
-For ongoing freshness without Docker's `sync` service, schedule
-`python -m scripts.sync_hansards` via cron (e.g. `0 6 * * *`) or Task Scheduler.
+
+The full backfill (first run, ~8 years back by default) can take a while —
+it's making one real HTTP request per discovered sitting date (or per
+calendar day, in the blind-probe fallback), so let it run in a dedicated
+terminal rather than waiting on it inline:
+
+```bash
+python -m scripts.sync_hansards
+```
+
+For ongoing freshness without Docker's `sync` service, schedule that same
+command via cron (macOS/Linux) or Task Scheduler (Windows). Example:
+daily at 6am, logging output so you can check it ran:
+
+```bash
+crontab -e
+# add a line like:
+0 6 * * * cd /path/to/gh-parliament-ai && /path/to/venv/bin/python -m scripts.sync_hansards >> data/sync.log 2>&1
+```
+
+Use absolute paths for both the repo and the venv's `python` — cron runs
+with a minimal environment, so a bare `python` on `PATH` won't resolve to
+your virtualenv.
 
 ### Frontend (`web/`)
 

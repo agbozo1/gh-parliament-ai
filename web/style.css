@@ -152,40 +152,6 @@ h1 {
   cursor: default;
 }
 
-.link-btn {
-  border: none;
-  background: none;
-  color: var(--muted);
-  font-family: inherit;
-  font-size: 0.85rem;
-  cursor: pointer;
-  margin-top: 14px;
-  padding: 4px;
-}
-
-.link-btn:hover {
-  color: var(--text);
-}
-
-.advanced {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  margin-top: 10px;
-  font-size: 0.9rem;
-  color: var(--muted);
-}
-
-.advanced input {
-  font-family: inherit;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 6px 10px;
-  background: var(--card);
-  color: var(--text);
-}
-
 .chat-log {
   display: flex;
   flex-direction: column;
