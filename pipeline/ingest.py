@@ -31,6 +31,12 @@ CHROMA_COLLECTION = os.environ.get("CHROMA_COLLECTION", "ghana_parliament_hansar
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 100
 
+# Chroma enforces a max batch size on add_documents() well under the
+# 200k+ chunks a full historical backfill can produce -- writing in
+# smaller batches avoids the whole ingest run failing outright (and
+# committing nothing at all) on a large corpus.
+ADD_BATCH_SIZE = 500
+
 _WHITESPACE_RE = re.compile(r"[ \t]+")
 _BLANK_LINES_RE = re.compile(r"\n{3,}")
 
@@ -187,8 +193,16 @@ def run_ingest(
         logger.info("No new documents to ingest")
         return 0
 
-    vector_store.add_documents(documents)
-    logger.info("Ingested %d chunks into collection '%s'", len(documents), collection_name)
+    for start in range(0, len(documents), ADD_BATCH_SIZE):
+        batch = documents[start : start + ADD_BATCH_SIZE]
+        vector_store.add_documents(batch)
+        logger.info(
+            "Ingested chunks %d-%d of %d into collection '%s'",
+            start + 1,
+            start + len(batch),
+            len(documents),
+            collection_name,
+        )
     return len(documents)
 
 

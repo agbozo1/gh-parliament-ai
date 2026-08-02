@@ -158,6 +158,29 @@ def test_run_ingest_is_idempotent_across_repeated_calls(tmp_path, mocker):
     assert vector_store._collection.count() == 1
 
 
+def test_run_ingest_writes_in_batches_to_avoid_exceeding_chromas_max_batch_size(
+    tmp_path, mocker
+):
+    pdf_path = tmp_path / "raw" / "11th February, 2025.pdf"
+    pdf_path.parent.mkdir()
+    pdf_path.touch()
+
+    long_text = "Ghana Parliament proceedings. " * 200  # multiple 800-char chunks
+    mocker.patch("pipeline.ingest.extract_text", return_value=long_text)
+    mocker.patch("pipeline.ingest.ADD_BATCH_SIZE", 2)
+
+    fake_store = mocker.Mock()
+    fake_store.get.return_value = {"metadatas": []}
+    mocker.patch("pipeline.ingest.get_vector_store", return_value=fake_store)
+
+    chunks_written = run_ingest(input_dir=str(pdf_path.parent))
+
+    all_batches = [call.args[0] for call in fake_store.add_documents.call_args_list]
+    assert len(all_batches) > 1  # a single call would have exceeded the batch size
+    assert all(len(batch) <= 2 for batch in all_batches)
+    assert sum(len(batch) for batch in all_batches) == chunks_written
+
+
 def test_get_latest_ingested_date_and_filenames(tmp_path, mocker):
     pdf_path = tmp_path / "raw" / "11th February, 2025.pdf"
     pdf_path.parent.mkdir()
