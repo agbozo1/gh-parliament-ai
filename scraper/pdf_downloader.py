@@ -37,12 +37,23 @@ REQUEST_TIMEOUT_SECONDS = float(os.environ.get("REQUEST_TIMEOUT_SECONDS", "30"))
 _MONTH_NAMES = (
     "January February March April May June July August September October November December"
 ).split()
+_MONTH_ABBR_TO_NUM = {name[:3].lower(): i + 1 for i, name in enumerate(_MONTH_NAMES)}
+
 _DISPLAY_NAME_RE = re.compile(
-    # The ordinal suffix, comma, and surrounding whitespace are all
-    # optional so this matches across naming eras: recent filenames are
-    # spaced out with a comma ("24th July, 2026" / "29th May 2026"), while
-    # older ones are lowercase and fully unpunctuated ("24may2005").
-    r"(\d{1,2})(?:st|nd|rd|th)?,?\s*(" + "|".join(_MONTH_NAMES) + r"),?\s*(\d{4})",
+    # Real listing entries are inconsistently formatted across the years
+    # in every way imaginable: ordinal suffix or not ("24th" / "24"),
+    # comma/period/space or some mix as separators ("July, 2026" /
+    # "Nov. 2023" / "Dece 2023"), a leading day-of-week ("Fri 18 Nov
+    # 2022"), even non-standard month abbreviations ("Dece" for
+    # December). So this only anchors on a day number, a 3-letter month
+    # prefix (matching the recognized abbreviation regardless of what
+    # follows it -- "Jul" here matches "July", "Jul", or "Jul." equally),
+    # and a 4-digit year, with any punctuation/whitespace allowed (and
+    # optional) between them. A leading day-of-week or trailing "(2)"
+    # correction suffix is simply outside the match and ignored.
+    r"(\d{1,2})(?:st|nd|rd|th)?[\s.,]*"
+    r"(" + "|".join(_MONTH_ABBR_TO_NUM) + r")\w*"
+    r"[\s.,]*(\d{4})",
     re.IGNORECASE,
 )
 
@@ -104,17 +115,14 @@ def build_pdf_url(date_obj: datetime, base_url: str = PARLIAMENT_BASE_URL) -> tu
 
 
 def parse_display_name_to_date(display_name: str) -> datetime | None:
-    """Parse a filename into a datetime, across naming eras.
-
-    Handles both the recent, spaced-out form ('11th February, 2025') and
-    the older, unpunctuated form ('24may2005') the site used in the past --
-    see build_pdf_url's docstring.
+    """Parse a filename into a datetime, tolerating the site's inconsistent
+    real-world formatting -- see _DISPLAY_NAME_RE's comment for examples.
     """
     match = _DISPLAY_NAME_RE.search(display_name)
     if not match:
         return None
-    day, month_name, year = match.groups()
-    month = _MONTH_NAMES.index(month_name.capitalize()) + 1
+    day, month_abbr, year = match.groups()
+    month = _MONTH_ABBR_TO_NUM[month_abbr.lower()]
     return datetime(int(year), month, int(day))
 
 

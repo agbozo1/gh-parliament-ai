@@ -44,6 +44,31 @@ def test_parse_display_name_handles_older_unpunctuated_lowercase_form():
     assert parse_display_name_to_date("2june2005") == datetime(2005, 6, 2)
 
 
+def test_parse_display_name_handles_real_inconsistent_listing_text():
+    # Actual entries pulled from the live listing: abbreviated months (with
+    # or without a trailing period), periods/double-spaces as separators,
+    # a leading day-of-week, and a non-standard abbreviation ("Dece").
+    cases = {
+        "17th October. 2024": datetime(2024, 10, 17),
+        "15  Dece 2023": datetime(2023, 12, 15),
+        "7 Dece 2023": datetime(2023, 12, 7),
+        "28th  Nov. 2023": datetime(2023, 11, 28),
+        "1 Aug, 2023": datetime(2023, 8, 1),
+        "17th Feb. 2023": datetime(2023, 2, 17),
+        "16th Feb 2023": datetime(2023, 2, 16),
+        "9th Dec. 2022 (2)": datetime(2022, 12, 9),
+        "Fri 18 Nov 2022": datetime(2022, 11, 18),
+        "Tues 8 Nov 2022": datetime(2022, 11, 8),
+    }
+    for display_name, expected in cases.items():
+        assert parse_display_name_to_date(display_name) == expected, display_name
+
+
+def test_parse_display_name_returns_none_for_non_date_listing_entries():
+    assert parse_display_name_to_date("OPAPlan") is None
+    assert parse_display_name_to_date("OPEN_GOVERNMENT_PARTNERSHIP_SPAIN") is None
+
+
 class _FakeResponse:
     def __init__(self, content=b"%PDF-1.4 fake", status_code=200):
         self.content = content
