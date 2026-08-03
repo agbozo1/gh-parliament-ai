@@ -10,6 +10,11 @@ const questionInput = document.getElementById("question");
 const submitBtn = document.getElementById("submit-btn");
 const chatLogEl = document.getElementById("chat-log");
 
+// Query submission is held off until the health check resolves, so the
+// first thing anyone can do is send a request to a backend that's
+// confirmed reachable — see the "disabled while checking" state below.
+let apiReady = false;
+
 // The index is kept up to date automatically (full backfill once, then a
 // daily check for newly published sittings — see pipeline/sync.py). There's
 // no ingest control here on purpose: by the time anyone opens this page,
@@ -24,9 +29,13 @@ async function checkHealth() {
       ? ` · latest sitting indexed: ${data.latest_sitting_date}`
       : "";
     statusTextEl.textContent = `Online — ${data.documents_indexed} chunk(s) indexed${freshness}`;
+    apiReady = true;
+    submitBtn.disabled = false;
   } catch (err) {
     statusEl.className = "status status--error";
     statusTextEl.textContent = "API unreachable";
+    apiReady = false;
+    submitBtn.disabled = true;
   }
 }
 
@@ -105,6 +114,8 @@ function failAssistantTurn(bubble, message) {
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
 
+  if (!apiReady) return;
+
   const question = questionInput.value.trim();
   if (!question) return;
 
@@ -137,5 +148,7 @@ form.addEventListener("submit", async (event) => {
     scrollToLatest();
   }
 });
+
+submitBtn.disabled = true;
 
 checkHealth();
