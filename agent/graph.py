@@ -186,8 +186,18 @@ def build_graph(llm=None):
 
 
 def run_agent(query: str, date_filter: Optional[str] = None, llm=None) -> dict:
-    """Run the agent end-to-end and return {"answer": str, "sources": list[dict]}."""
-    app = build_graph(llm=llm)
+    """Run the agent end-to-end and return {"answer": str, "sources": list[dict]}.
+
+    Resolves the LLM once per request (get_llm() picks randomly among
+    configured providers when more than one is available) and reuses that
+    same instance across query_classifier, reranker, and answer_generator,
+    rather than letting each node re-roll independently -- otherwise a
+    single request could inconsistently mix providers, and one bad or
+    rate-limited key could silently zero out just the reranking stage
+    while classification and answering succeeded on a different provider.
+    """
+    model = llm or get_llm()
+    app = build_graph(llm=model)
     result = app.invoke({"query": query, "date_filter": date_filter})
     return {
         "answer": result.get("answer", NO_CONTEXT_MESSAGE),

@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 from langchain_core.documents import Document
 
-from agent.graph import NO_CONTEXT_MESSAGE, build_graph
+from agent.graph import NO_CONTEXT_MESSAGE, build_graph, run_agent
 
 
 class FakeLLM:
@@ -120,6 +120,21 @@ def test_refuses_when_retrieval_returns_nothing(mocker):
     assert result["retrieved"] == []
     assert result["answer"] == NO_CONTEXT_MESSAGE
     assert result["sources"] == []
+
+
+def test_run_agent_resolves_the_llm_once_and_reuses_it_across_all_nodes(mocker):
+    # query_classifier, reranker, and answer_generator each fall back to
+    # get_llm() when no llm is threaded through -- run_agent must resolve
+    # it exactly once per request so a single query can't inconsistently
+    # mix providers (get_llm() picks randomly among configured keys).
+    mocker.patch("agent.tools.retriever.search", return_value=_fake_docs())
+    fake_llm = FakeLLM(classification="RETRIEVAL", scores=[9, 8], answer="Answer.")
+    get_llm_mock = mocker.patch("agent.graph.get_llm", return_value=fake_llm)
+
+    result = run_agent("What did the budget statement cover?")
+
+    get_llm_mock.assert_called_once()
+    assert result["answer"] == "Answer."
 
 
 def test_citation_formatter_dedupes_by_document(mocker):
