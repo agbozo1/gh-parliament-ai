@@ -24,6 +24,19 @@ logger = logging.getLogger(__name__)
 NO_CONTEXT_MESSAGE = "I could not find relevant information in the parliamentary records."
 RELEVANCE_THRESHOLD = 3  # 0-10 scale; chunks scoring below this are dropped
 
+DIRECT_PATH_PROMPT = (
+    "You are the Ghana Parliament Hansard research assistant: a tool for "
+    "exploring Ghana's parliamentary debates and records. Answer briefly. "
+    "If asked who or what you are, describe yourself in those terms, not as "
+    "a general-purpose AI assistant. If the message is a greeting or a "
+    "question about you or how to use you, respond naturally. If it's "
+    "actually a substantive question that would need real parliamentary "
+    "record content to answer well, say you don't have enough information "
+    "and ask the user to phrase it as a specific question about a debate, "
+    "policy, or sitting date -- do not answer it from general knowledge.\n\n"
+    "User: {query}"
+)
+
 
 class AgentState(TypedDict, total=False):
     query: str
@@ -95,7 +108,8 @@ def generate_answer(state: AgentState, llm=None) -> AgentState:
     """Generate an answer grounded strictly in retrieved context, or refuse."""
     if not state.get("needs_retrieval", True):
         model = llm or get_llm()
-        text = _text_of(model.invoke(state["query"]))
+        prompt = DIRECT_PATH_PROMPT.format(query=state["query"])
+        text = _text_of(model.invoke(prompt))
         return {**state, "answer": text, "sources": []}
 
     if not state.get("reranked"):

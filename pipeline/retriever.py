@@ -6,7 +6,10 @@ from langchain_core.documents import Document
 
 from pipeline.ingest import CHROMA_COLLECTION, CHROMA_PERSIST_DIR, get_vector_store
 
-DEFAULT_TOP_K = 5
+# With a large corpus (hundreds of thousands of chunks spanning decades),
+# a small top_k risks losing the actually-relevant chunk among other years'
+# similarly-worded debates before the reranker ever sees it.
+DEFAULT_TOP_K = 15
 
 
 def search(

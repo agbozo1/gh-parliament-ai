@@ -85,6 +85,18 @@ def test_direct_path_skips_retrieval_entirely(mocker):
     search_mock.assert_not_called()
 
 
+def test_direct_path_grounds_the_llm_with_assistant_identity(mocker):
+    mocker.patch("agent.tools.retriever.search", return_value=_fake_docs())
+    llm = FakeLLM(classification="DIRECT", answer="Hi there!")
+
+    graph = build_graph(llm=llm)
+    graph.invoke({"query": "what conversations do people have in general?", "date_filter": None})
+
+    direct_prompt = llm.calls[-1]
+    assert "Ghana Parliament Hansard research assistant" in direct_prompt
+    assert "general-purpose AI assistant" in direct_prompt
+
+
 def test_refuses_when_no_chunks_survive_reranking(mocker):
     mocker.patch("agent.tools.retriever.search", return_value=_fake_docs())
     # Both chunks score below the relevance threshold.
