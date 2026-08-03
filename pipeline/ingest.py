@@ -41,77 +41,73 @@ _WHITESPACE_RE = re.compile(r"[ \t]+")
 _BLANK_LINES_RE = re.compile(r"\n{3,}")
 
 
+# Real Hansard pages: column body text doesn't line-wrap in sync between
+# the two columns (a short left-column line can sit at the same height as
+# a much longer right-column one), so a per-line gap check mostly finds
+# lines with only one column's words present -- not useful. Instead this
+# buckets word *centers* (not full word spans, so one wide word can't
+# smear across many buckets) across the whole page and looks for a
+# contiguous low-density band in the middle -- the gutter.
+_GUTTER_BUCKETS = 60
 _MIN_WORDS_TO_JUDGE_LAYOUT = 20
-_LINE_Y_TOLERANCE = 3.0  # points; words within this of each other are one line
-_MIN_LINES_TO_JUDGE_LAYOUT = 5
-_MIN_GUTTER_FRACTION_OF_WIDTH = 0.03  # a gap must be at least this wide to count
-_MIN_AGREEING_LINE_FRACTION = 0.5  # majority of lines must show the gap
-
-
-def _group_words_into_lines(words: list[dict]) -> list[list[dict]]:
-    """Cluster words into visual lines by similar vertical position."""
-    lines: list[list[dict]] = []
-    for word in sorted(words, key=lambda w: w["top"]):
-        for line in lines:
-            if abs(line[0]["top"] - word["top"]) <= _LINE_Y_TOLERANCE:
-                line.append(word)
-                break
-        else:
-            lines.append([word])
-    return lines
-
-
-def _line_gutter_gap(line_words: list[dict], page_width: float) -> float | None:
-    """If this line has a wide gap between words roughly centered on the
-    page, return the gap's midpoint; else None."""
-    ordered = sorted(line_words, key=lambda w: w["x0"])
-    if len(ordered) < 2:
-        return None
-
-    best_gap_width = 0.0
-    best_gap_mid = None
-    for left, right in zip(ordered, ordered[1:]):
-        gap_width = right["x0"] - left["x1"]
-        gap_mid = (left["x1"] + right["x0"]) / 2
-        if page_width * 0.25 <= gap_mid <= page_width * 0.75 and gap_width > best_gap_width:
-            best_gap_width, best_gap_mid = gap_width, gap_mid
-
-    if best_gap_mid is not None and best_gap_width >= page_width * _MIN_GUTTER_FRACTION_OF_WIDTH:
-        return best_gap_mid
-    return None
+_GUTTER_DENSITY_THRESHOLD = 1  # a bucket with at most this many word-centers counts as "empty"
+_MIN_GUTTER_BUCKETS = 2
+_MIN_FLANKING_DENSITY = 3  # real content must surround the gutter on both sides
 
 
 def _detect_column_gutter(page) -> float | None:
     """Return the x-coordinate of a two-column gutter, or None if the page
     looks single-column.
 
-    Hansard pages are typically two-column; pdfplumber's default
-    extract_text() orders words primarily by vertical position across the
-    *whole* page width, which interleaves left- and right-column lines that
-    sit at similar heights into garbled text. Rather than aggregating every
-    word on the page into one coverage map (a single full-width header or
-    footer line would mark the middle as "covered" and hide a real gutter
-    for the whole page), this checks each visual line individually for a
-    wide, roughly-centered gap between words, and requires a majority of
-    lines to agree -- so a handful of header/footer/table lines can't
-    prevent detection, and a genuinely single-column page (where hardly any
-    line has a centered gap) correctly returns None.
+    pdfplumber's default extract_text() orders words primarily by vertical
+    position across the *whole* page width, which interleaves left- and
+    right-column lines that sit at similar heights into garbled text. This
+    looks for a contiguous, low-density vertical band roughly in the middle
+    of the page -- tolerating a stray word or two (e.g. a running header's
+    date, whose bounding box can bridge the gutter) rather than requiring
+    it to be strictly empty -- and requires real word density on both sides
+    of that band, so a genuinely single-column or sparse page doesn't get
+    misread as having one.
     """
     words = page.extract_words()
     if len(words) < _MIN_WORDS_TO_JUDGE_LAYOUT:
         return None
 
-    lines = _group_words_into_lines(words)
-    if len(lines) < _MIN_LINES_TO_JUDGE_LAYOUT:
+    bucket_width = page.width / _GUTTER_BUCKETS
+    counts = [0] * _GUTTER_BUCKETS
+    for word in words:
+        center = (word["x0"] + word["x1"]) / 2
+        bucket = min(_GUTTER_BUCKETS - 1, max(0, int(center / bucket_width)))
+        counts[bucket] += 1
+
+    # Only look for a gutter within the middle half of the page -- a gap
+    # near either edge is just a margin, not a column boundary. Find the
+    # longest run of low-density buckets in that range.
+    middle_lo, middle_hi = _GUTTER_BUCKETS // 4, _GUTTER_BUCKETS * 3 // 4
+    best_run: tuple[int, int] | None = None
+    run_start = None
+    for bucket in range(middle_lo, middle_hi + 1):
+        if counts[bucket] <= _GUTTER_DENSITY_THRESHOLD:
+            if run_start is None:
+                run_start = bucket
+            continue
+        if run_start is not None:
+            if best_run is None or (bucket - run_start) > (best_run[1] - best_run[0]):
+                best_run = (run_start, bucket - 1)
+            run_start = None
+    if run_start is not None:
+        if best_run is None or (middle_hi - run_start) > (best_run[1] - best_run[0]):
+            best_run = (run_start, middle_hi)
+
+    if best_run is None or (best_run[1] - best_run[0] + 1) < _MIN_GUTTER_BUCKETS:
         return None
 
-    gaps = [_line_gutter_gap(line, page.width) for line in lines]
-    gaps = [gap for gap in gaps if gap is not None]
-    if len(gaps) < _MIN_AGREEING_LINE_FRACTION * len(lines):
+    left_density = sum(counts[max(0, best_run[0] - 3) : best_run[0]])
+    right_density = sum(counts[best_run[1] + 1 : best_run[1] + 4])
+    if left_density < _MIN_FLANKING_DENSITY or right_density < _MIN_FLANKING_DENSITY:
         return None
 
-    gaps.sort()
-    return gaps[len(gaps) // 2]  # median, robust to a few outlier lines
+    return (best_run[0] + best_run[1] + 1) / 2 * bucket_width
 
 
 def _extract_page_text(page) -> str:

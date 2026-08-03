@@ -49,22 +49,29 @@ def _make_words(prefix, x_start, x_end, count, top=100.0):
 
 
 def _make_two_column_lines(
-    num_lines, left_range=(50, 250), right_range=(350, 550), top_start=100.0, line_height=15.0
+    num_lines,
+    left_range=(50, 250),
+    right_range=(350, 550),
+    top_start=100.0,
+    line_height=15.0,
+    words_per_column=20,
 ):
-    """Words for a synthetic multi-line two-column page (3 words/column/line)."""
+    """Words for a synthetic multi-line two-column page, dense enough per
+    column that there's no bucket-sized gap within a column itself -- only
+    the real gutter between columns should register as low-density."""
     words = []
     for i in range(num_lines):
         top = top_start + i * line_height
         for col, (x_start, x_end) in enumerate((left_range, right_range)):
-            words += _make_words(f"L{i}C{col}W", x_start, x_end, 3, top=top)
+            words += _make_words(f"L{i}C{col}W", x_start, x_end, words_per_column, top=top)
     return words
 
 
 def _make_single_column_lines(
-    num_lines, x_range=(50, 550), top_start=100.0, line_height=15.0, words_per_line=8
+    num_lines, x_range=(50, 550), top_start=100.0, line_height=15.0, words_per_line=50
 ):
     """Words for a synthetic multi-line single-column page spanning the
-    full width, with no gap in the middle."""
+    full width, dense enough that no bucket-sized gap appears anywhere."""
     words = []
     for i in range(num_lines):
         top = top_start + i * line_height
@@ -120,18 +127,31 @@ def test_detect_column_gutter_returns_none_when_too_few_words():
     assert _detect_column_gutter(page) is None
 
 
-def test_detect_column_gutter_ignores_a_full_width_header_line():
-    # Regression test: a single full-width header/page-number line (e.g.
-    # "1 20th November, 2025 2") must not prevent detecting a real gutter
-    # from the many two-column body lines below it.
-    header = _make_words("header", 50, 550, 6, top=50.0)
-    body = _make_two_column_lines(num_lines=12, top_start=100.0)
-    page = FakePage(width=600, height=800, words=header + body)
+def test_detect_column_gutter_tolerates_a_stray_word_centered_in_the_gutter():
+    # Regression test, based on a real Hansard page: a running header's
+    # date ("20th November, 2025") had a bounding box that bridged the
+    # gutter, landing its center almost exactly in the middle of an
+    # otherwise-empty band. One such stray word must not prevent detecting
+    # the real gutter from the two-column body beneath it.
+    body = _make_two_column_lines(num_lines=12)
+    stray = [{"text": "stray", "x0": 280.0, "x1": 320.0, "top": 50.0, "bottom": 60.0}]
+    page = FakePage(width=600, height=800, words=body + stray)
 
     gutter_x = _detect_column_gutter(page)
 
     assert gutter_x is not None
     assert 250 < gutter_x < 350
+
+
+def test_detect_column_gutter_requires_real_density_on_both_sides():
+    # All content clustered near the left edge, with nothing on the right
+    # half of the page at all -- there's a "low-density" band, but it's
+    # not a real column gutter since there's no content flanking it on
+    # the right. Must not be misread as two-column.
+    words = _make_words("word", 50, 140, 25, top=100.0)
+    page = FakePage(width=600, height=800, words=words)
+
+    assert _detect_column_gutter(page) is None
 
 
 def test_extract_page_text_splits_two_column_pages_left_then_right():
@@ -141,7 +161,7 @@ def test_extract_page_text_splits_two_column_pages_left_then_right():
     text = _extract_page_text(page)
 
     assert text.index("L0C0W0") < text.index("L0C1W0")
-    assert "L0C1W0" in text and "L11C0W2" in text
+    assert "L0C1W0" in text and "L11C0W19" in text
 
 
 def test_extract_page_text_falls_back_to_plain_extraction_for_single_column():
