@@ -48,6 +48,30 @@ def _make_words(prefix, x_start, x_end, count, top=100.0):
     return words
 
 
+def _make_two_column_lines(
+    num_lines, left_range=(50, 250), right_range=(350, 550), top_start=100.0, line_height=15.0
+):
+    """Words for a synthetic multi-line two-column page (3 words/column/line)."""
+    words = []
+    for i in range(num_lines):
+        top = top_start + i * line_height
+        for col, (x_start, x_end) in enumerate((left_range, right_range)):
+            words += _make_words(f"L{i}C{col}W", x_start, x_end, 3, top=top)
+    return words
+
+
+def _make_single_column_lines(
+    num_lines, x_range=(50, 550), top_start=100.0, line_height=15.0, words_per_line=8
+):
+    """Words for a synthetic multi-line single-column page spanning the
+    full width, with no gap in the middle."""
+    words = []
+    for i in range(num_lines):
+        top = top_start + i * line_height
+        words += _make_words(f"L{i}W", x_range[0], x_range[1], words_per_line, top=top)
+    return words
+
+
 class FakeEmbeddings(Embeddings):
     """Deterministic, dependency-free stand-in for a real embedding model."""
 
@@ -71,7 +95,7 @@ def test_clean_text_collapses_whitespace_and_blank_lines():
 
 
 def test_detect_column_gutter_finds_the_gap_in_a_two_column_page():
-    words = _make_words("left", 50, 250, 15) + _make_words("right", 350, 550, 15)
+    words = _make_two_column_lines(num_lines=12)
     page = FakePage(width=600, height=800, words=words)
 
     gutter_x = _detect_column_gutter(page)
@@ -81,8 +105,9 @@ def test_detect_column_gutter_finds_the_gap_in_a_two_column_page():
 
 
 def test_detect_column_gutter_returns_none_for_a_single_column_page():
-    # Words spread continuously across the full width -- no gap in the middle.
-    words = _make_words("word", 50, 550, 40)
+    # Words spread continuously across the full width on every line -- no
+    # gap in the middle.
+    words = _make_single_column_lines(num_lines=12)
     page = FakePage(width=600, height=800, words=words)
 
     assert _detect_column_gutter(page) is None
@@ -95,19 +120,32 @@ def test_detect_column_gutter_returns_none_when_too_few_words():
     assert _detect_column_gutter(page) is None
 
 
+def test_detect_column_gutter_ignores_a_full_width_header_line():
+    # Regression test: a single full-width header/page-number line (e.g.
+    # "1 20th November, 2025 2") must not prevent detecting a real gutter
+    # from the many two-column body lines below it.
+    header = _make_words("header", 50, 550, 6, top=50.0)
+    body = _make_two_column_lines(num_lines=12, top_start=100.0)
+    page = FakePage(width=600, height=800, words=header + body)
+
+    gutter_x = _detect_column_gutter(page)
+
+    assert gutter_x is not None
+    assert 250 < gutter_x < 350
+
+
 def test_extract_page_text_splits_two_column_pages_left_then_right():
-    left_words = _make_words("left", 50, 250, 15)
-    right_words = _make_words("right", 350, 550, 15)
-    page = FakePage(width=600, height=800, words=left_words + right_words)
+    words = _make_two_column_lines(num_lines=12)
+    page = FakePage(width=600, height=800, words=words)
 
     text = _extract_page_text(page)
 
-    assert text.index("left0") < text.index("right0")
-    assert "right0" in text and "left14" in text
+    assert text.index("L0C0W0") < text.index("L0C1W0")
+    assert "L0C1W0" in text and "L11C0W2" in text
 
 
 def test_extract_page_text_falls_back_to_plain_extraction_for_single_column():
-    words = _make_words("word", 50, 550, 40)
+    words = _make_single_column_lines(num_lines=12)
     page = FakePage(width=600, height=800, words=words, full_text="the full single-column text")
 
     assert _extract_page_text(page) == "the full single-column text"
