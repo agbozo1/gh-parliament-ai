@@ -104,6 +104,14 @@ def rerank(state: AgentState, llm=None) -> AgentState:
 
     scored.sort(key=lambda pair: pair[0], reverse=True)
     reranked = [doc for score, doc in scored if score >= RELEVANCE_THRESHOLD]
+    logger.info(
+        "Reranked %r: kept %d/%d chunk(s) (threshold=%d); scores=%s",
+        state["query"],
+        len(reranked),
+        len(docs),
+        RELEVANCE_THRESHOLD,
+        [score for score, _ in scored],
+    )
     return {**state, "reranked": reranked}
 
 

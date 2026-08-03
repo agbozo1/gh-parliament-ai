@@ -3,6 +3,8 @@ import hashlib
 from langchain_core.embeddings import Embeddings
 
 from pipeline.ingest import (
+    _detect_column_gutter,
+    _extract_page_text,
     build_metadata,
     clean_text,
     get_ingested_filenames,
@@ -11,6 +13,39 @@ from pipeline.ingest import (
     load_and_chunk_pdfs,
     run_ingest,
 )
+
+
+class FakePage:
+    """Minimal stand-in for a pdfplumber Page, for testing column detection
+    without needing a real PDF file."""
+
+    def __init__(self, width, height, words, full_text=""):
+        self.width = width
+        self.height = height
+        self._words = words
+        self._full_text = full_text
+
+    def extract_words(self):
+        return self._words
+
+    def extract_text(self):
+        return self._full_text
+
+    def within_bbox(self, bbox):
+        x0, _top, x1, _bottom = bbox
+        words_in_bbox = [w for w in self._words if w["x0"] >= x0 - 1e-6 and w["x1"] <= x1 + 1e-6]
+        text = " ".join(w["text"] for w in words_in_bbox)
+        return FakePage(x1 - x0, self.height, words_in_bbox, full_text=text)
+
+
+def _make_words(prefix, x_start, x_end, count, top=100.0):
+    step = (x_end - x_start) / count
+    words = []
+    for i in range(count):
+        x0 = x_start + i * step
+        x1 = x0 + step * 0.8
+        words.append({"text": f"{prefix}{i}", "x0": x0, "x1": x1, "top": top, "bottom": top + 10})
+    return words
 
 
 class FakeEmbeddings(Embeddings):
@@ -33,6 +68,49 @@ def test_clean_text_collapses_whitespace_and_blank_lines():
     assert "   " not in cleaned
     assert "\n\n\n" not in cleaned
     assert cleaned == "Hansard report text\n\nMore text"
+
+
+def test_detect_column_gutter_finds_the_gap_in_a_two_column_page():
+    words = _make_words("left", 50, 250, 15) + _make_words("right", 350, 550, 15)
+    page = FakePage(width=600, height=800, words=words)
+
+    gutter_x = _detect_column_gutter(page)
+
+    assert gutter_x is not None
+    assert 250 < gutter_x < 350
+
+
+def test_detect_column_gutter_returns_none_for_a_single_column_page():
+    # Words spread continuously across the full width -- no gap in the middle.
+    words = _make_words("word", 50, 550, 40)
+    page = FakePage(width=600, height=800, words=words)
+
+    assert _detect_column_gutter(page) is None
+
+
+def test_detect_column_gutter_returns_none_when_too_few_words():
+    words = _make_words("word", 50, 550, 5)
+    page = FakePage(width=600, height=800, words=words)
+
+    assert _detect_column_gutter(page) is None
+
+
+def test_extract_page_text_splits_two_column_pages_left_then_right():
+    left_words = _make_words("left", 50, 250, 15)
+    right_words = _make_words("right", 350, 550, 15)
+    page = FakePage(width=600, height=800, words=left_words + right_words)
+
+    text = _extract_page_text(page)
+
+    assert text.index("left0") < text.index("right0")
+    assert "right0" in text and "left14" in text
+
+
+def test_extract_page_text_falls_back_to_plain_extraction_for_single_column():
+    words = _make_words("word", 50, 550, 40)
+    page = FakePage(width=600, height=800, words=words, full_text="the full single-column text")
+
+    assert _extract_page_text(page) == "the full single-column text"
 
 
 def test_build_metadata_parses_date_and_session_from_filename(tmp_path):

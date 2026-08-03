@@ -41,10 +41,82 @@ _WHITESPACE_RE = re.compile(r"[ \t]+")
 _BLANK_LINES_RE = re.compile(r"\n{3,}")
 
 
+# Number of x-position buckets used to look for a column gutter -- fine
+# enough to find a narrow gap, coarse enough that a handful of stray
+# characters (e.g. text rendered slightly outside its column) can't hide it.
+_GUTTER_BUCKETS = 50
+_MIN_WORDS_TO_JUDGE_LAYOUT = 20
+_MIN_GUTTER_BUCKETS = 2
+
+
+def _detect_column_gutter(page) -> float | None:
+    """Return the x-coordinate of a two-column gutter, or None if the page
+    looks single-column.
+
+    Hansard pages are typically two-column; pdfplumber's default
+    extract_text() orders words primarily by vertical position across the
+    *whole* page width, which interleaves left- and right-column lines that
+    sit at similar heights into garbled text. This looks for a contiguous,
+    mostly-empty vertical band roughly in the middle of the page -- the gap
+    between two columns -- rather than assuming every page is split evenly
+    in half, since some pages (e.g. a title page, or a full-width table)
+    genuinely are single-column and would be corrupted by a blind split.
+    """
+    words = page.extract_words()
+    if len(words) < _MIN_WORDS_TO_JUDGE_LAYOUT:
+        return None
+
+    bucket_width = page.width / _GUTTER_BUCKETS
+    covered = [False] * _GUTTER_BUCKETS
+    for word in words:
+        start = max(0, int(word["x0"] / bucket_width))
+        end = min(_GUTTER_BUCKETS - 1, int(word["x1"] / bucket_width))
+        for bucket in range(start, end + 1):
+            covered[bucket] = True
+
+    # Only look for a gutter within the middle half of the page -- a gap
+    # near either edge is just a margin, not a column boundary. Find the
+    # longest run of empty buckets in that range; a two-column page will
+    # have one, a single-column page won't.
+    middle_lo, middle_hi = _GUTTER_BUCKETS // 4, _GUTTER_BUCKETS * 3 // 4
+    best_run: tuple[int, int] | None = None
+    run_start = None
+    for bucket in range(middle_lo, middle_hi + 1):
+        if not covered[bucket]:
+            if run_start is None:
+                run_start = bucket
+            continue
+        if run_start is not None:
+            if best_run is None or (bucket - run_start) > (best_run[1] - best_run[0]):
+                best_run = (run_start, bucket - 1)
+            run_start = None
+    if run_start is not None:
+        run_end = middle_hi
+        if best_run is None or (run_end - run_start) > (best_run[1] - best_run[0]):
+            best_run = (run_start, run_end)
+
+    if best_run is None or (best_run[1] - best_run[0] + 1) < _MIN_GUTTER_BUCKETS:
+        return None
+    return (best_run[0] + best_run[1] + 1) / 2 * bucket_width
+
+
+def _extract_page_text(page) -> str:
+    """Extract one page's text, splitting into columns if a gutter is found."""
+    gutter_x = _detect_column_gutter(page)
+    if gutter_x is None:
+        return page.extract_text() or ""
+
+    left = page.within_bbox((0, 0, gutter_x, page.height)).extract_text() or ""
+    right = page.within_bbox((gutter_x, 0, page.width, page.height)).extract_text() or ""
+    return "\n\n".join(part for part in (left, right) if part)
+
+
 def extract_text(pdf_path: Path) -> str:
-    """Extract raw text from every page of a PDF."""
+    """Extract raw text from every page of a PDF, splitting two-column
+    pages so left/right column lines at similar heights aren't interleaved.
+    """
     with pdfplumber.open(pdf_path) as pdf:
-        pages = [page.extract_text() for page in pdf.pages]
+        pages = [_extract_page_text(page) for page in pdf.pages]
     return "\n".join(page for page in pages if page)
 
 
