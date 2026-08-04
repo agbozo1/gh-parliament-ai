@@ -73,10 +73,13 @@ def _detect_column_gutter(page) -> float | None:
     if len(words) < _MIN_WORDS_TO_JUDGE_LAYOUT:
         return None
 
+    # Bucket relative to the page's actual left edge, not an assumed 0 --
+    # some PDFs have a non-zero bbox origin.
+    page_x0 = page.bbox[0]
     bucket_width = page.width / _GUTTER_BUCKETS
     counts = [0] * _GUTTER_BUCKETS
     for word in words:
-        center = (word["x0"] + word["x1"]) / 2
+        center = (word["x0"] + word["x1"]) / 2 - page_x0
         bucket = min(_GUTTER_BUCKETS - 1, max(0, int(center / bucket_width)))
         counts[bucket] += 1
 
@@ -107,7 +110,7 @@ def _detect_column_gutter(page) -> float | None:
     if left_density < _MIN_FLANKING_DENSITY or right_density < _MIN_FLANKING_DENSITY:
         return None
 
-    return (best_run[0] + best_run[1] + 1) / 2 * bucket_width
+    return page_x0 + (best_run[0] + best_run[1] + 1) / 2 * bucket_width
 
 
 def _extract_page_text(page) -> str:
@@ -116,8 +119,13 @@ def _extract_page_text(page) -> str:
     if gutter_x is None:
         return page.extract_text() or ""
 
-    left = page.within_bbox((0, 0, gutter_x, page.height)).extract_text() or ""
-    right = page.within_bbox((gutter_x, 0, page.width, page.height)).extract_text() or ""
+    # Use the page's actual bounding box rather than assuming it starts at
+    # (0, 0) -- some PDFs have a slightly offset origin (e.g. a mediabox
+    # with a small negative top), and within_bbox() raises if the proposed
+    # box isn't fully inside the real one.
+    x0, top, x1, bottom = page.bbox
+    left = page.within_bbox((x0, top, gutter_x, bottom)).extract_text() or ""
+    right = page.within_bbox((gutter_x, top, x1, bottom)).extract_text() or ""
     return "\n\n".join(part for part in (left, right) if part)
 
 
@@ -186,7 +194,14 @@ def load_and_chunk_pdfs(
         logger.info("Skipping %d already-indexed PDF(s)", skipped)
 
     for pdf_path in pdf_paths:
-        raw_text = extract_text(pdf_path)
+        try:
+            raw_text = extract_text(pdf_path)
+        except Exception:
+            # A single malformed/unusual PDF (e.g. an unexpected page
+            # geometry) must not abort extraction for every other file in
+            # a large batch -- skip it and keep going.
+            logger.exception("Failed to extract text from %s; skipping", pdf_path)
+            continue
         if not raw_text.strip():
             logger.warning("No extractable text in %s, skipping", pdf_path)
             continue

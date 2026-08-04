@@ -17,13 +17,17 @@ from pipeline.ingest import (
 
 class FakePage:
     """Minimal stand-in for a pdfplumber Page, for testing column detection
-    without needing a real PDF file."""
+    without needing a real PDF file. Mimics real pdfplumber behavior of
+    raising ValueError from within_bbox() when the proposed box isn't
+    fully inside the page's own bbox -- letting tests catch the same class
+    of bug a real (non-origin-aligned) PDF page can trigger."""
 
-    def __init__(self, width, height, words, full_text=""):
+    def __init__(self, width, height, words, full_text="", bbox=None):
         self.width = width
         self.height = height
         self._words = words
         self._full_text = full_text
+        self.bbox = bbox if bbox is not None else (0, 0, width, height)
 
     def extract_words(self):
         return self._words
@@ -32,10 +36,21 @@ class FakePage:
         return self._full_text
 
     def within_bbox(self, bbox):
-        x0, _top, x1, _bottom = bbox
+        x0, top, x1, bottom = bbox
+        page_x0, page_top, page_x1, page_bottom = self.bbox
+        out_of_bounds = (
+            x0 < page_x0 - 1e-6
+            or top < page_top - 1e-6
+            or x1 > page_x1 + 1e-6
+            or bottom > page_bottom + 1e-6
+        )
+        if out_of_bounds:
+            raise ValueError(
+                f"Bounding box {bbox} is not fully within parent page bounding box {self.bbox}"
+            )
         words_in_bbox = [w for w in self._words if w["x0"] >= x0 - 1e-6 and w["x1"] <= x1 + 1e-6]
         text = " ".join(w["text"] for w in words_in_bbox)
-        return FakePage(x1 - x0, self.height, words_in_bbox, full_text=text)
+        return FakePage(x1 - x0, bottom - top, words_in_bbox, full_text=text, bbox=bbox)
 
 
 def _make_words(prefix, x_start, x_end, count, top=100.0):
@@ -171,6 +186,20 @@ def test_extract_page_text_falls_back_to_plain_extraction_for_single_column():
     assert _extract_page_text(page) == "the full single-column text"
 
 
+def test_extract_page_text_handles_a_page_whose_bbox_does_not_start_at_origin():
+    # Regression test: a real PDF crashed with "Bounding box (0, 0, ...)
+    # is not fully within parent page bounding box (0, -0.012, ...)" --
+    # some pages have a slightly non-zero/negative top-left origin, so a
+    # split bbox assuming (0, 0, width, height) can fall just outside the
+    # page's real bounds.
+    words = _make_two_column_lines(num_lines=12)
+    page = FakePage(width=600, height=800.02, words=words, bbox=(0, -0.02, 600, 800))
+
+    text = _extract_page_text(page)
+
+    assert "L0C0W0" in text and "L0C1W0" in text
+
+
 def test_build_metadata_parses_date_and_session_from_filename(tmp_path):
     pdf_path = tmp_path / "11th February, 2025.pdf"
     pdf_path.touch()
@@ -223,6 +252,27 @@ def test_load_and_chunk_pdfs_skips_empty_extraction(tmp_path, mocker):
 def test_load_and_chunk_pdfs_missing_directory_returns_empty_list(tmp_path):
     missing_dir = tmp_path / "does-not-exist"
     assert load_and_chunk_pdfs(str(missing_dir)) == []
+
+
+def test_load_and_chunk_pdfs_skips_a_pdf_that_fails_to_extract(tmp_path, mocker):
+    # Regression test: a single malformed PDF (e.g. an unusual page bbox)
+    # must not abort chunking for every other file in a large batch --
+    # losing hours of work on one bad file is exactly what happened before
+    # this was caught.
+    (tmp_path / "11th February, 2025.pdf").touch()
+    (tmp_path / "12th February, 2025.pdf").touch()
+
+    def fake_extract_text(pdf_path):
+        if "11th" in str(pdf_path):
+            raise ValueError("Bounding box is not fully within parent page bounding box")
+        return "Some short text."
+
+    mocker.patch("pipeline.ingest.extract_text", side_effect=fake_extract_text)
+
+    documents = load_and_chunk_pdfs(str(tmp_path))
+
+    filenames = {doc.metadata["pdf_filename"] for doc in documents}
+    assert filenames == {"12th February, 2025.pdf"}
 
 
 def test_load_and_chunk_pdfs_skips_already_ingested_filenames(tmp_path, mocker):
