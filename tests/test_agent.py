@@ -69,6 +69,24 @@ def test_retrieval_path_answers_with_citations(mocker):
     assert result["sources"][0]["date"] == "2025-02-11"
 
 
+def test_retrieval_path_prompt_discourages_over_cautious_refusal(mocker):
+    # Regression test: real reranked chunks are often short, disjointed
+    # Hansard fragments rather than a tidy narrative, and the answer prompt
+    # was refusing even when the reranker had already confirmed relevance.
+    # Assert the prompt actually sent to the model tells it to summarize
+    # partial/fragmentary context instead of demanding a complete answer
+    # before it'll say anything.
+    mocker.patch("agent.tools.retriever.search", return_value=_fake_docs())
+    llm = FakeLLM(classification="RETRIEVAL", scores=[9, 8], answer="Answer.")
+
+    graph = build_graph(llm=llm)
+    graph.invoke({"query": "What did the budget statement cover?", "date_filter": None})
+
+    answer_prompt = next(p for p in llm.calls if "Answer the user's question" in p)
+    assert "partial or fragmentary" in answer_prompt
+    assert "do not withhold an answer" in answer_prompt.lower()
+
+
 def test_direct_path_skips_retrieval_entirely(mocker):
     search_mock = mocker.patch("agent.tools.retriever.search", return_value=_fake_docs())
     llm = FakeLLM(

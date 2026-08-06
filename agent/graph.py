@@ -130,9 +130,14 @@ def generate_answer(state: AgentState, llm=None) -> AgentState:
     context = "\n\n---\n\n".join(doc["content"] for doc in state["reranked"])
     prompt = (
         "Answer the user's question using ONLY the parliamentary record excerpts "
-        "below. If the excerpts do not contain enough information to answer, "
-        f'respond with exactly "{NO_CONTEXT_MESSAGE}" and nothing else. Do not use '
-        f"outside knowledge.\n\nExcerpts:\n{context}\n\nQuestion: {state['query']}"
+        "below -- do not use outside knowledge. These excerpts were already "
+        "screened for relevance, so summarize what they actually say about the "
+        "question even if the coverage is partial or fragmentary (real Hansard "
+        "chunks are often short mid-conversation fragments, not tidy summaries); "
+        "do not withhold an answer just because the excerpts don't cover every "
+        f'angle. Only respond with exactly "{NO_CONTEXT_MESSAGE}" (nothing else) '
+        "if none of the excerpts are actually relevant to the question.\n\n"
+        f"Excerpts:\n{context}\n\nQuestion: {state['query']}"
     )
     text = _text_of(model.invoke(prompt))
     return {**state, "answer": text}
