@@ -89,10 +89,14 @@ def rerank(state: AgentState, llm=None) -> AgentState:
     model = llm or get_llm()
     scored = []
     for doc in docs:
+        sitting_date = doc.get("metadata", {}).get("date", "unknown date")
         prompt = (
             "On a scale of 0 to 10, how relevant is the following passage to the "
-            f"question below? Respond with only a number.\n\nQuestion: {state['query']}"
-            f"\n\nPassage: {doc['content'][:1000]}"
+            "question below? If the question asks about a specific year/period and "
+            "this passage is from a sitting on a different date, score it low even "
+            "if the general topic matches. Respond with only a number.\n\n"
+            f"Question: {state['query']}"
+            f"\n\nPassage (from the sitting on {sitting_date}): {doc['content'][:1000]}"
         )
         try:
             digits = "".join(ch for ch in _text_of(model.invoke(prompt)) if ch.isdigit())
@@ -127,16 +131,24 @@ def generate_answer(state: AgentState, llm=None) -> AgentState:
         return {**state, "answer": NO_CONTEXT_MESSAGE, "sources": []}
 
     model = llm or get_llm()
-    context = "\n\n---\n\n".join(doc["content"] for doc in state["reranked"])
+    context = "\n\n---\n\n".join(
+        f"[Sitting on {doc.get('metadata', {}).get('date', 'unknown date')}]\n{doc['content']}"
+        for doc in state["reranked"]
+    )
     prompt = (
         "Answer the user's question using ONLY the parliamentary record excerpts "
-        "below -- do not use outside knowledge. These excerpts were already "
-        "screened for relevance, so summarize what they actually say about the "
-        "question even if the coverage is partial or fragmentary (real Hansard "
-        "chunks are often short mid-conversation fragments, not tidy summaries); "
-        "do not withhold an answer just because the excerpts don't cover every "
-        f'angle. Only respond with exactly "{NO_CONTEXT_MESSAGE}" (nothing else) '
-        "if none of the excerpts are actually relevant to the question.\n\n"
+        "below -- do not use outside knowledge. Each excerpt is labeled with its "
+        "sitting date; if the question asks about a specific year/period, ignore "
+        "excerpts from a different one even if their general topic matches (e.g. "
+        "a passage about 'the Budget Statement' from an unrelated year is not "
+        "about this year's budget). These excerpts were already screened for "
+        "relevance, so summarize what the ones that actually match the asked-"
+        "about period say, even if the coverage is partial or fragmentary (real "
+        "Hansard chunks are often short mid-conversation fragments, not tidy "
+        "summaries); do not withhold an answer just because the excerpts don't "
+        f'cover every angle. Only respond with exactly "{NO_CONTEXT_MESSAGE}" '
+        "(nothing else) if none of the excerpts are actually relevant to the "
+        "question.\n\n"
         f"Excerpts:\n{context}\n\nQuestion: {state['query']}"
     )
     text = _text_of(model.invoke(prompt))

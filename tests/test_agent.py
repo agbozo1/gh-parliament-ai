@@ -69,6 +69,37 @@ def test_retrieval_path_answers_with_citations(mocker):
     assert result["sources"][0]["date"] == "2025-02-11"
 
 
+def test_rerank_prompt_shows_the_chunks_sitting_date(mocker):
+    # Regression test: a passage that mentions "the Budget Statement"
+    # generically (without stating its year in that particular excerpt)
+    # was scoring as relevant to any year's budget question, because the
+    # reranker never saw which sitting it actually came from.
+    mocker.patch("agent.tools.retriever.search", return_value=_fake_docs())
+    llm = FakeLLM(classification="RETRIEVAL", scores=[9, 8], answer="Answer.")
+
+    graph = build_graph(llm=llm)
+    graph.invoke({"query": "What did the budget statement cover?", "date_filter": None})
+
+    score_prompts = [p for p in llm.calls if "how relevant is the following passage" in p]
+    assert len(score_prompts) == 2
+    assert "sitting on 2025-02-11" in score_prompts[0]
+    assert "sitting on 2025-02-12" in score_prompts[1]
+    assert "different date" in score_prompts[0]
+
+
+def test_answer_prompt_labels_each_excerpt_with_its_sitting_date(mocker):
+    mocker.patch("agent.tools.retriever.search", return_value=_fake_docs())
+    llm = FakeLLM(classification="RETRIEVAL", scores=[9, 8], answer="Answer.")
+
+    graph = build_graph(llm=llm)
+    graph.invoke({"query": "What did the budget statement cover?", "date_filter": None})
+
+    answer_prompt = next(p for p in llm.calls if "Answer the user's question" in p)
+    assert "[Sitting on 2025-02-11]" in answer_prompt
+    assert "[Sitting on 2025-02-12]" in answer_prompt
+    assert "ignore excerpts from a different" in answer_prompt
+
+
 def test_retrieval_path_prompt_discourages_over_cautious_refusal(mocker):
     # Regression test: real reranked chunks are often short, disjointed
     # Hansard fragments rather than a tidy narrative, and the answer prompt
